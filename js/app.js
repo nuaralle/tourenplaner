@@ -352,7 +352,7 @@ function renderPlan() {
        <li class="stop${done ? " done" : ""}${L.fixed ? " isfix" : ""}"><div class="t">${hhmm(L.begin)}${L.fixed ? `<span class="fixb">fix</span>` : ""}</div><div class="who"><button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> ${abcTag(c)}
        <div class="sub">${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)} · ${navLink(c, "Navi")}${c.tel ? " · " + telLink(c.tel) : ""} · ${L.dur} Min. · ${dueText(c)}${!c.oh ? " · Öffnungszeiten unbekannt" : c.ohp.known ? "" : " · Öffnungszeiten nicht lesbar"}</div>${L.warn ? `<div class="warn">${esc(L.warn)}</div>` : ""}${L.fixed ? kalHinweis(c.id) : ""}</div>
        <div class="acts">${done ? `<span class="ok">besucht</span>` : D.abgeschlossen ? `<span class="warn">nicht angetroffen</span>` : `${L.fixed ? `<button data-a="unfix" data-d="${di}" data-id="${c.id}">Fix lösen</button>` : `<button class="fixbtn" data-a="fix" data-d="${di}" data-id="${c.id}" data-time="${hhmm(L.begin)}">Termin fix</button>`}<button data-a="visit" data-id="${c.id}">Besuch erfassen</button>`}<button class="ghost" data-a="rm" data-d="${di}" data-id="${c.id}" aria-label="${esc(c.n1)} aus der Tour nehmen">Entfernen</button></div>
-       ${done ? "" : ac ? `<div class="alt"><span>Falls keine Zeit: <b>${esc(ac.n1)}</b> · ${esc(ac.ort)}, ${a.km < 1 ? "gleicher Ort" : Math.round(a.km) + " km entfernt"}${ac.tel ? " · " + telLink(ac.tel) : ""}${a.weit ? " · wenig Umsatz" : ""}</span><button data-a="alt" data-d="${di}" data-id="${c.id}" data-alt="${ac.id}">Alternative nehmen</button></div>`
+       ${done ? "" : ac ? `<div class="alt"><span>Falls keine Zeit: <b>${esc(ac.n1)}</b> · ${esc(ac.ort)}, ${a.km < 1 ? "gleicher Ort" : Math.round(a.km) + " km entfernt"}${ac.tel ? " · " + telLink(ac.tel) : ""}${a.weit ? " · " + (P.MERKMAL() ? "kein " + esc(P.MERKMAL()) : "wenig Umsatz") : ""}</span><button data-a="alt" data-d="${di}" data-id="${c.id}" data-alt="${ac.id}">Alternative nehmen</button></div>`
         : `<div class="alt">Keine Alternative in der Nähe gefunden</div>`}</li>`;
     });
     if (D.type === "ov1") {
@@ -462,7 +462,7 @@ function renderList() {
   if (FILTER.trend) L = L.filter(ruecklaeufig);
   if (FILTER.trend) L.sort((a, b) => (b.trendAlt - b.trendHoch) - (a.trendAlt - a.trendHoch)); // größter Verlust in Euro zuerst
   else L.sort((a, b) => b.urg - a.urg);
-  return `<div class="listhead"><div><h2>Kunden</h2><p class="muted">${P.CUST.length} aktiv · ${P.LAENGST() ? "am längsten nicht besuchte zuerst" : "sortiert nach Umsatz " + S().umsatzJahr}</p></div>
+  return `<div class="listhead"><div><h2>Kunden</h2><p class="muted">${P.CUST.length} aktiv · ${P.MERKMAL() ? "Planung: nur " + esc(P.MERKMAL()) + " · " : ""}${P.LAENGST() ? "am längsten nicht besuchte zuerst" : "sortiert nach Umsatz " + S().umsatzJahr}</p></div>
    <div class="row"><button class="pri" data-a="new">Kunde hinzufügen</button><button data-a="export">Als Excel sichern</button></div></div>
    <div class="filters"><input type="search" id="q" placeholder="Name, Ort oder PLZ suchen" value="${esc(FILTER.q)}" aria-label="Kunden suchen">
    <select id="fabc" aria-label="Priorität"><option value="">Alle Prioritäten</option>${["A", "B", "C"].map(x => `<option ${FILTER.abc === x ? "selected" : ""}>${x}</option>`).join("")}</select>
@@ -480,13 +480,13 @@ function renderSettings() {
   const f = (k, l, t = "number", extra = "") => `<label>${l}<input type="${t}" data-s="${k}" value="${esc(s[k])}" ${extra}></label>`;
   return `<h2>Einstellungen</h2><p class="muted">Änderungen gelten ab der nächsten Planung.</p>
   <div class="sets"><fieldset><legend>Planungsgrundlage</legend>
-   <label>Kunden auswählen nach<select data-s="grundlage">${[["umsatz", "Umsatz (umsatzstärkste zuerst)"], ["laengst", "Am längsten nicht besuchte Kunden zuerst"]].map(([v, l]) => `<option value="${v}" ${s.grundlage === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+   <label>Kunden auswählen nach<select data-s="grundlage">${grundlagen().map(([v, l]) => `<option value="${esc(v)}" ${s.grundlage === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
    <label>Umsatz-Jahr für die Planung<select data-s="umsatzJahr" data-zahl="1">${umsatzAuswahl()}</select></label>
    ${P.trendInfo() ? `<label>Umsätze ${P.trendInfo().jahr} gelten bis (Stand der Liste, leer = heute)<input type="date" data-s="umsatzStand" value="${esc(s.umsatzStand || "")}"></label>
    <p class="muted">Damit wird ${P.trendInfo().jahr} für den Vergleich mit ${P.trendInfo().vorjahr} aufs ganze Jahr hochgerechnet. „Kundenliste abgleichen“ trägt das Datum aus dem Dateinamen selbst ein.</p>
    <label class="chk"><input type="checkbox" data-s="trendBevorzugen" ${s.trendBevorzugen ? "checked" : ""}> Kunden mit rückläufigem Umsatz (ab −20 %) bevorzugt einplanen</label>` : ""}
    ${f("abstandWochen", "Mindestabstand zwischen zwei Besuchen (Wochen)")}
-   <p class="muted">${P.LAENGST() ? "Kunden, deren letzter Besuch am längsten zurückliegt, werden zuerst eingeplant (noch nie besuchte ganz vorn), auch Kunden ohne Umsatz." : "Die umsatzstärksten Kunden werden zuerst eingeplant, nur Kunden mit Umsatz im gewählten Jahr."} Wer innerhalb des Mindestabstands besucht wurde, wird übersprungen.</p></fieldset>
+   <p class="muted">${P.MERKMAL() ? `Es werden nur Kunden mit Häkchen bei „${esc(P.MERKMAL())}“ eingeplant (${DATA.kunden.filter(k => !k.inactive && P.hatMerkmal(k)).length} Kunden), die umsatzstärksten zuerst. Fehlt in der Nähe ein Alternativ-Kunde mit Häkchen, wird ein anderer Kunde vorgeschlagen.` : P.LAENGST() ? "Kunden, deren letzter Besuch am längsten zurückliegt, werden zuerst eingeplant (noch nie besuchte ganz vorn), auch Kunden ohne Umsatz." : "Die umsatzstärksten Kunden werden zuerst eingeplant, nur Kunden mit Umsatz im gewählten Jahr."} Wer innerhalb des Mindestabstands besucht wurde, wird übersprungen.</p></fieldset>
   <fieldset><legend>Woche und Übernachtung</legend>
    ${f("overnightKm", "Übernachtung ab Fahrstrecke (km)")}
    <label>Bevorzugte Tage der Übernachtungstour<select data-s="overnightDays">${[["0-1", "Montag/Dienstag"], ["1-2", "Dienstag/Mittwoch"], ["2-3", "Mittwoch/Donnerstag"]].map(([v, l]) => `<option value="${v}" ${s.overnightDays === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
@@ -532,6 +532,13 @@ function renderSettings() {
    <p class="muted">Beim Laden wird der Stand auf diesem Gerät ersetzt.</p></fieldset></div>`;
 }
 
+// Planungsgrundlagen: Umsatz, am längsten nicht besucht und „nur …“ für jede Häkchen-Spalte (z. B. Deko Kunde)
+function grundlagen() {
+  const L = [["umsatz", "Umsatz (umsatzstärkste zuerst)"], ["laengst", "Am längsten nicht besuchte Kunden zuerst"]];
+  for (const s of haekchenSpalten()) L.push(["merkmal:" + s, `Nur „${s}“ (${DATA.kunden.filter(k => !k.inactive && P.hatMerkmal(k, s)).length} Kunden, umsatzstärkste zuerst)`]);
+  const akt = S().grundlage; if (!L.some(([v]) => v === akt)) L.push([akt, `Nur „${String(akt).replace(/^merkmal:/, "")}“ (Spalte nicht mehr vorhanden)`]);
+  return L.map(([v, l]) => [v, esc(l)]);
+}
 // Auswahl der Umsatz-Jahre, die in der Kundenliste vorkommen (z. B. Spalten "Umsatz 24", "Umsatz 25", "Umsatz 26")
 function umsatzAuswahl() {
   const jahre = umsatzJahre(DATA.kunden); const akt = +S().umsatzJahr;

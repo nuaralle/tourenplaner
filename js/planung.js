@@ -83,14 +83,18 @@ export function rebuild(kunden) {
 }
 // Planungsgrundlage: "umsatz" = umsatzstärkste zuerst, "laengst" = am längsten nicht besuchte Kunden zuerst (auch ohne Umsatz)
 export const LAENGST = () => S.grundlage === "laengst";
+// Planungsgrundlage „nur Kunden mit Häkchen“ (z. B. "merkmal:Deko Kunde"): Name der Häkchen-Spalte oder null
+export const MERKMAL = () => String(S.grundlage || "").startsWith("merkmal:") ? S.grundlage.slice(8) : null;
+const istJa = v => v === true || /^(ja|x|1|wahr|true)$/i.test(String(v ?? "").trim());
+export const hatMerkmal = (c, name = MERKMAL()) => !!name && istJa((c.extra || {})[name]);
 // Mindestabstand: gapOk = letzter Besuch liegt am Stichtag (Montag der geplanten Woche) mindestens "abstandWochen" zurück
 export function setzeStichtag(datumISO) {
   const grenze = iso(addDays(parseISO(datumISO), -7 * (+S.abstandWochen || 0)));
   for (const c of CUST) c.gapOk = !c.lv || c.lv <= grenze;
 }
 export const byId = id => byIdMap.get(id);
-// Kommt für die Planung in Frage: Mindestabstand eingehalten (nach Umsatz: und Umsatz im gewählten Jahr)
-export const el = c => c.gapOk && (LAENGST() || c.uPlan > 0);
+// Kommt für die Planung in Frage: Mindestabstand eingehalten und – je nach Grundlage – Umsatz im gewählten Jahr bzw. Häkchen gesetzt
+export const el = c => c.gapOk && (MERKMAL() ? hatMerkmal(c) : LAENGST() || c.uPlan > 0);
 
 /* ---------- Tagessimulation ---------- */
 function hoursFor(c, day) { const v = c.ohp.days[day]; if (v === null) { return day >= 5 ? "closed" : [[8 * 60, 18 * 60]]; } return v; }
