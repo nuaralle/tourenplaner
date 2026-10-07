@@ -315,6 +315,17 @@ function tagAbschliessen(week, di) {
   D.abgeschlossen = true; geaendert();
   toast(`${WD[D.day]} abgeschlossen: ${n} besucht${nicht ? ", " + nicht + " nicht angetroffen" : ""}`);
 }
+// Nur die Reihenfolge eines Tages verbessern (dieselben Kunden, schnellste Reihenfolge)
+function reihenfolgeVerbessern(di) {
+  const D = PLAN() && PLAN().days[di]; if (!D) return;
+  aufbereiten();
+  const dauer = s => (D.type === "ov1" ? s.legs[s.legs.length - 1].leave : s.end) - s.depart;
+  const vorher = P.simDay(D), besser = P.feinschliff(D), nachher = P.simDay(D);
+  if (!besser) { toast("Die Reihenfolge ist schon die schnellste"); return; }
+  geaendert();
+  const fz = s => s.legs.reduce((a, L) => a + L.min, 0) + s.backMin;
+  toast(`Reihenfolge verbessert: Arbeitstag ${Math.round(dauer(vorher) - dauer(nachher))} Min. kürzer, ${Math.round(fz(vorher) - fz(nachher))} Min. weniger Fahrzeit`);
+}
 // Reiter mit allen geplanten Wochen (vergangene Wochen mit offenen Besuchen bekommen einen Hinweis)
 function wochenReiter() {
   const L = PLAENE(); if (L.length < 2) return "";
@@ -345,11 +356,11 @@ function renderPlan() {
     if (!D.stops.length) { html += `<p class="muted">Keine passenden Kunden gefunden.</p></article>`; return; }
     const startName = D.type === "ov2" ? "Hotel in " + esc(D.hotel.ort) : "Bremen";
     html += `<ol class="stops"><li class="node">${hhmm(sim.depart)} Abfahrt ${startName}</li>`;
-    sim.legs.forEach(L => {
+    sim.legs.forEach((L, i) => { const nr = i + 1;
       const c = byId(L.id); const done = c.lv && c.lv >= D.date;
       const a = alt[c.id], ac = a && byId(a.id);
       html += `<li class="leg"><span class="drv">${L.geschaetzt && nGesch < legs.length ? "≈ " : ""}${Math.round(L.km)} km · ${Math.round(L.min)} Min.</span></li>
-       <li class="stop${done ? " done" : ""}${L.fixed ? " isfix" : ""}"><div class="t">${hhmm(L.begin)}${L.fixed ? `<span class="fixb">fix</span>` : ""}</div><div class="who"><button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> ${abcTag(c)}
+       <li class="stop${done ? " done" : ""}${L.fixed ? " isfix" : ""}"><div class="t"><span class="nr" style="background:var(--dc)">${nr}</span>${hhmm(L.begin)}${L.fixed ? `<span class="fixb">fix</span>` : ""}</div><div class="who"><button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> ${abcTag(c)}
        <div class="sub">${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)} · ${navLink(c, "Navi")}${c.tel ? " · " + telLink(c.tel) : ""} · ${L.dur} Min. · ${dueText(c)}${!c.oh ? " · Öffnungszeiten unbekannt" : c.ohp.known ? "" : " · Öffnungszeiten nicht lesbar"}</div>${L.warn ? `<div class="warn">${esc(L.warn)}</div>` : ""}${L.fixed ? kalHinweis(c.id) : ""}</div>
        <div class="acts">${done ? `<span class="ok">besucht</span>` : D.abgeschlossen ? `<span class="warn">nicht angetroffen</span>` : `${L.fixed ? `<button data-a="unfix" data-d="${di}" data-id="${c.id}">Fix lösen</button>` : `<button class="fixbtn" data-a="fix" data-d="${di}" data-id="${c.id}" data-time="${hhmm(L.begin)}">Termin fix</button>`}<button data-a="visit" data-id="${c.id}">Besuch erfassen</button>`}<button class="ghost" data-a="rm" data-d="${di}" data-id="${c.id}" aria-label="${esc(c.n1)} aus der Tour nehmen">Entfernen</button></div>
        ${done ? "" : ac ? `<div class="alt"><span>Falls keine Zeit: <b>${esc(ac.n1)}</b> · ${esc(ac.ort)}, ${a.km < 1 ? "gleicher Ort" : Math.round(a.km) + " km entfernt"}${ac.tel ? " · " + telLink(ac.tel) : ""}${a.weit ? " · " + (P.MERKMAL() ? "kein " + esc(P.MERKMAL()) : "wenig Umsatz") : ""}</span><button data-a="alt" data-d="${di}" data-id="${c.id}" data-alt="${ac.id}">Alternative nehmen</button></div>`
@@ -361,7 +372,7 @@ function renderPlan() {
     }
     else html += `<li class="leg"><span class="drv">${Math.round(sim.backKm)} km · ${Math.round(sim.backMin)} Min.</span></li><li class="node">ca. ${hhmm(sim.end)} zurück in Bremen</li></ol>`;
     const lim = P.dayEnds(D).limit; const over = lim != null && sim.end > lim;
-    html += `<footer><span>${Math.round(sim.km)} km · ${D.stops.length} Besuche · ${nFix} fix</span>${over ? `<span class="warn">später als ${hhmm(lim)} zurück</span>` : ""}${D.date <= today() && D.stops.some(id => !besucht(id, D.date)) && !D.abgeschlossen ? `<button class="pri" data-a="tagab" data-week="${PL.week}" data-d="${di}">Tag abschließen</button>` : ""}<a href="${gmaps(D)}" target="_blank" rel="noopener">Route in Google Maps</a></footer></article>`;
+    html += `<footer><span>${Math.round(sim.km)} km · ${D.stops.length} Besuche · ${nFix} fix</span>${over ? `<span class="warn">später als ${hhmm(lim)} zurück</span>` : ""}${D.date <= today() && D.stops.some(id => !besucht(id, D.date)) && !D.abgeschlossen ? `<button class="pri" data-a="tagab" data-week="${PL.week}" data-d="${di}">Tag abschließen</button>` : ""}${D.date >= today() && D.stops.length >= 3 ? `<button class="ghost" data-a="feinschliff" data-d="${di}">Reihenfolge verbessern</button>` : ""}<a href="${gmaps(D)}" target="_blank" rel="noopener">Route in Google Maps</a></footer></article>`;
   });
   return html + `</div>`;
 }
@@ -412,7 +423,7 @@ function drawMap() {
   PL.days.forEach((D, di) => {
     if (!D.stops.length) return; const e = P.dayEnds(D); const seq = [e.start].concat(D.stops.map(byId).filter(Boolean)); if (e.end) seq.push(e.end);
     g += `<polyline points="${seq.map(p => Pt(p).map(v => v.toFixed(1)).join(",")).join(" ")}" class="route" style="stroke:var(--d${di})"/>`;
-    D.stops.forEach(id => { const c = byId(id); if (!c) return; const [x, y] = Pt(c); g += `<circle cx="${x}" cy="${y}" r="4.2" class="stopdot" style="fill:var(--d${di})"/>`; });
+    D.stops.forEach((id, i) => { const c = byId(id); if (!c) return; const [x, y] = Pt(c); g += `<circle cx="${x}" cy="${y}" r="6.5" class="stopdot" style="fill:var(--d${di})"/><text x="${x}" y="${y}" class="stopnr">${i + 1}</text>`; });
     if (D.type === "ov1" && D.hotel) { const [x, y] = Pt(D.hotel); g += `<rect x="${x - 5}" y="${y - 5}" width="10" height="10" class="hotelmk"/>`; }
     leg += `<span><i style="background:var(--d${di})"></i>${WDS[D.day]}</span>`;
   });
@@ -922,6 +933,7 @@ document.addEventListener("click", async e => {
   try {
     if (a === "plan") doPlan();
     if (a === "plan4") vierWochenPlanen();
+    if (a === "feinschliff") reihenfolgeVerbessern(+b.dataset.d);
     if (a === "sichern") { const n = await sicherungAnlegen(uhrzeitJetzt()); render(); toast("Gesichert: " + n); }
     if (a === "tagab") tagAbschliessenDialog(b.dataset.week, +b.dataset.d);
     if (a === "wzeigen") { DATA.plan = planVon(b.dataset.week) || DATA.plan; persist(false); render(); scrollTo(0, 0); }

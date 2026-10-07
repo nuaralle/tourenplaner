@@ -146,9 +146,10 @@ export const UEBERNACHTUNG = [["auto", "Automatisch"], ["0-1", "Mo → Di"], ["1
 // belegt: Kunden aus anderen geplanten Wochen (werden in dieser Woche nicht noch einmal eingeplant)
 export function planWeek(mondayISO, excluded, fixed, uebernachtung = "auto", belegt) {
   setzeBelegt(belegt);
-  if (uebernachtung === "auto") return planWeekAuto(mondayISO, excluded, fixed);
-  const plan = planWeekTage(mondayISO, excluded, fixed, uebernachtung);
-  plan.uebernachtung = uebernachtung; return plan;
+  const plan = uebernachtung === "auto" ? planWeekAuto(mondayISO, excluded, fixed) : planWeekTage(mondayISO, excluded, fixed, uebernachtung);
+  plan.uebernachtung = uebernachtung;
+  for (const D of plan.days) feinschliff(D); // zum Schluss: schnellste Reihenfolge je Tag
+  return plan;
 }
 // Mehrere Wochen nacheinander planen: wer in einer Woche eingeplant ist, kommt in den folgenden nicht noch einmal dran.
 export function planeWochen(startMonISO, anzahl, fixed, belegt = []) {
@@ -244,6 +245,43 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung) {
   for (const D of days) { if (D.type !== "home" && (D.stops.length || D.type === "ov2")) auffuellen(D, frei, id => used.add(id)); } // Tag 2: Heimweg vom Hotel
   return { week: mondayISO, days, excluded: [...ex], fixed, created: new Date().toISOString() };
 }
+/* ---------- Feinschliff: schnellste Reihenfolge eines Tages ---------- */
+// Prüft alle Reihenfolgen der Besuche mit den echten Fahrzeiten (Verzweigen und Abschneiden: Reihenfolgen, die schon
+// unterwegs nicht mehr besser werden können, werden verworfen). Bewertung: Dauer des Arbeitstags (Abfahrt bis Rückkehr bzw. bis Ende letzter Besuch an Tag 1)
+// + ein Viertel der Fahrzeit (bei gleicher Dauer gewinnt weniger Fahren).
+// Eingehalten wird: Öffnungszeiten, feste Termine nicht später als bisher, Rückkehrzeit (bzw. letzter Besuch Tag 1 bis 18 Uhr),
+// bei Übernachtung Tag 1 bleibt der letzte Besuch (Hotelort) der letzte.
+export function feinschliff(D) {
+  if (!D || D.type === "home" || D.stops.length < 3) return false;
+  const n = D.stops.length;
+  const e = dayEnds(D), jetzt = simulate(e.start, e.sMin, D.stops, D.day, e.end);
+  const fahrMin = s => s.legs.reduce((a, L) => a + L.min, 0) + s.backMin;
+  const verz = Object.fromEntries(jetzt.legs.filter(L => L.fixed).map(L => [L.id, L.verz]));
+  const grenze = e.limit != null ? Math.max(e.limit, jetzt.end) : null;
+  const gueltig = s => s.ok && !s.legs.some(L => L.fixed && L.verz > (verz[L.id] || 0) + 1)
+    && (D.type === "ov1" ? s.legs[s.legs.length - 1].begin <= Math.max(tmin(S.lastVisitDay1), jetzt.legs[jetzt.legs.length - 1].begin) : s.end <= grenze);
+  const wertVon = s => (D.type === "ov1" ? s.legs[s.legs.length - 1].leave : s.end) - s.depart + 0.25 * fahrMin(s);
+  let bestWert = wertVon(jetzt) - 0.5, best = null; // nur wirklich bessere Reihenfolgen übernehmen
+  const letzter = D.type === "ov1" ? D.stops[n - 1] : null, frei = letzter ? D.stops.slice(0, -1) : D.stops.slice();
+  const seq = [], benutzt = frei.map(() => false); let schritte = 0;
+  const rec = (pos, fahr, besuche) => {
+    // untere Grenze: bisherige Fahrzeit + Besuchsdauer (+ ein Viertel der Fahrzeit) – schon zu hoch? (bzw. Notbremse)
+    if (1.25 * fahr + besuche >= bestWert || ++schritte > 400000) return;
+    if (seq.length === frei.length) {
+      const voll = letzter ? seq.concat(letzter) : seq.slice();
+      const s = simulate(e.start, e.sMin, voll, D.day, e.end); const wert = wertVon(s);
+      if (wert < bestWert && gueltig(s)) { bestWert = wert; best = voll; }
+      return;
+    }
+    for (let i = 0; i < frei.length; i++) {
+      if (benutzt[i]) continue; const c = byId(frei[i]); if (!c) continue;
+      benutzt[i] = true; seq.push(frei[i]); rec(c, fahr + fahrt(pos, c).min, besuche + dauer(c)); seq.pop(); benutzt[i] = false;
+    }
+  };
+  rec(e.start, 0, 0);
+  if (best) { D.stops = best; return true; }
+  return false;
+}
 // Umweg (km), wenn Kunde c in die Strecke des Tages eingefügt wird – zwischen zwei Punkten der Strecke
 // (Start, Besuche, Rückfahrt nach Hause). Bei Übernachtung Tag 1 nur vor dem letzten Besuch (dort ist das Hotel).
 function umweg(D, c) {
@@ -331,6 +369,7 @@ export function planeTagUm(plan, di) {
   for (const c of near) { if (D.stops.length >= S.maxVisits) break; const r = insertBest(D, c.id); if (r) D.stops = r; }
   // Auffüllen: in der Nähe oder mit kleinem Umweg auf der Strecke (auch auf dem Heimweg)
   auffuellen(D, frei, () => {});
+  feinschliff(D); // schnellste Reihenfolge (bei Tag 1 bleibt der letzte Besuch = Hotelort)
   // Übernachtung Tag 1: Hotel im Ort des letzten Besuchs
   if (D.type === "ov1") {
     D.hotel = hotelOrt(byId(D.stops[D.stops.length - 1]));
