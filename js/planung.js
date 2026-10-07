@@ -37,8 +37,30 @@ export function fahrt(a, b) {
 export const dauer = c => +c.vm || S.visitMin;
 
 /* ---------- Kunden aufbereiten ---------- */
+/* ---------- Umsatzentwicklung ---------- */
+// Vergleich neuestes Jahr mit Vorjahr. Ist das neueste Jahr noch nicht vorbei, wird es aufs ganze Jahr hochgerechnet
+// (Stand = Datum der Umsatzliste, Einstellung "umsatzStand"; ohne Angabe gilt heute). Vor Mitte Februar ist das zu ungenau.
+let TREND = null;
+export const trendInfo = () => TREND;
+function trendGrundlage(kunden) {
+  const jahre = [...new Set(kunden.flatMap(k => Object.entries(k.ums || {}).filter(([, v]) => v > 0).map(([j]) => +j)))];
+  if (!jahre.length) return null;
+  const jahr = Math.max(...jahre), vorjahr = jahr - 1;
+  if (!jahre.includes(vorjahr)) return null;
+  const stand = S.umsatzStand || (jahr === new Date().getFullYear() ? today() : "");
+  let anteil = 1;
+  if (stand && +stand.slice(0, 4) === jahr) { const j0 = new Date(jahr, 0, 1), j1 = new Date(jahr + 1, 0, 1); anteil = Math.min(1, Math.max(0, (parseISO(stand) - j0 + 864e5) / (j1 - j0))); }
+  return { jahr, vorjahr, anteil, stand: anteil < 1 ? stand : "", zuFrueh: anteil < 0.12 };
+}
+// c.trend: Veränderung zum Vorjahr (-0.35 = -35 %), Infinity = neuer Umsatz, null = nicht bewertbar
+function umsatzTrend(c) {
+  c.trend = null; const T = TREND; if (!T || T.zuFrueh) return;
+  const alt = (c.ums || {})[T.vorjahr] || 0, neu = (c.ums || {})[T.jahr] || 0, hoch = neu / T.anteil;
+  c.trendAlt = alt; c.trendNeu = neu; c.trendHoch = hoch;
+  c.trend = alt > 0 ? (hoch - alt) / alt : neu > 0 ? Infinity : null;
+}
 export function rebuild(kunden) {
-  const list = [];
+  const list = []; TREND = trendGrundlage(kunden);
   for (const k of kunden) {
     if (k.inactive) continue;
     const c = Object.assign({}, k, { notes: k.notes || [], planHold: !!k.hold });
@@ -50,6 +72,9 @@ export function rebuild(kunden) {
     // Wichtigkeit für die Planung: umsatzstärkste zuerst – oder am längsten nicht besuchte zuerst
     // (noch nie besucht ganz vorn; bei gleichem Abstand entscheidet der Umsatz)
     c.urg = LAENGST() ? (c.since == null ? 1e5 : c.since) + c.uPlan / 1e9 : c.uPlan;
+    umsatzTrend(c);
+    // wahlweise: Kunden mit deutlich rückläufigem Umsatz (ab -20 %) bevorzugt einplanen (bis zu 50 % mehr Gewicht)
+    if (!LAENGST() && S.trendBevorzugen && c.trend != null && isFinite(c.trend) && c.trend <= -0.2) c.urg = c.uPlan * (1 + Math.min(0.5, -c.trend));
     c.out = c.dHome == null || c.dHome > 330;
     list.push(c);
   }

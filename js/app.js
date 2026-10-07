@@ -15,7 +15,7 @@ const XLSX_TYP = "application/vnd.openxmlformats-officedocument.spreadsheetml.sh
 // DATA: { kunden, einst, plan, kalLoeschen, quelle, ungesichert, drive:{id,modifiedTime}, driveOffen, aenderung }
 let DATA = null;
 let ORDNER = null;      // Infos zum Tourenplaner-Ordner, wenn die App auf dem Rechner läuft
-let TAB = "plan", FILTER = { q: "", abc: "", due: false, merkmal: "", ohneOh: false };
+let TAB = "plan", FILTER = { q: "", abc: "", due: false, merkmal: "", ohneOh: false, trend: false };
 let SPEICHER_OK = true, SYNC_LAEUFT = false, SYNC_FEHLER = "", KONFLIKT = null, syncTimer = null;
 let FZ = F.neueTabelle(), FZ_LAEUFT = "", FZ_MELDUNG = "";
 const S = () => P.S;
@@ -128,11 +128,30 @@ async function abgleichen() {
     else if (DATA.drive && !DATA.driveOffen) await vonDriveLaden(meta);
     else { KONFLIKT = meta; konfliktDialog(meta); }
     await fzVonDrive();
+    if (DATA && !KONFLIKT) await wochenSicherung();
   } catch (e) {
     console.warn(e);
     SYNC_FEHLER = e.code === "anmelden" ? "" : navigator.onLine ? "Google Drive nicht erreichbar – wird erneut versucht" : "";
-  } finally { SYNC_LAEUFT = false; statusZeigen(); }
+  } finally {
+    SYNC_LAEUFT = false; statusZeigen();
+    if (DATA && DATA.driveOffen && !KONFLIKT && !SYNC_FEHLER) planeAbgleich(); // z. B. Datum der Sicherung nachtragen
+  }
 }
+/* ---------- Sicherungen in Google Drive (Ordner Tourenplaner › Sicherungen) ---------- */
+// Kopie des ganzen Stands anlegen; zusatz kommt in den Dateinamen (z. B. "vor_Abgleich_1432")
+async function sicherungAnlegen(zusatz) {
+  const name = `Tourenplaner_Sicherung_${today()}${zusatz ? "_" + zusatz : ""}.xlsx`;
+  await G.sicherungSpeichern(name, schreibeStand(XLSX, DATA), XLSX_TYP);
+  DATA.sicherung = today(); persist(); // Datum geht mit in den Stand, damit nicht jedes Gerät noch einmal sichert
+  return name;
+}
+// Einmal pro Woche beim ersten Abgleich mit Google Drive
+async function wochenSicherung() {
+  if (DATA.sicherung && DATA.sicherung >= montag(today())) return;
+  try { const n = await sicherungAnlegen(""); toast("Wöchentliche Sicherung angelegt: " + n); }
+  catch (e) { console.warn("Sicherung", e); }
+}
+const uhrzeitJetzt = () => { const d = new Date(); return String(d.getHours()).padStart(2, "0") + String(d.getMinutes()).padStart(2, "0"); };
 async function nachDrive(id) {
   const stand = DATA.aenderung;
   const res = await G.dateiSpeichern(G.STAND_DATEI, schreibeStand(XLSX, DATA), XLSX_TYP, id);
@@ -142,7 +161,7 @@ async function nachDrive(id) {
 }
 async function vonDriveLaden(meta) {
   const st = leseStand(XLSX, await G.dateiLaden(meta.id));
-  DATA = { kunden: st.kunden, einst: st.einst, plan: st.plan, plaene: st.plaene, kalLoeschen: st.kalLoeschen, spalten: st.spalten, spaltenArten: st.spaltenArten, termine: st.termine, quelle: "Google Drive › " + G.ORDNER + " › " + G.STAND_DATEI,
+  DATA = { kunden: st.kunden, einst: st.einst, plan: st.plan, plaene: st.plaene, sicherung: st.sicherung, kalLoeschen: st.kalLoeschen, spalten: st.spalten, spaltenArten: st.spaltenArten, termine: st.termine, quelle: "Google Drive › " + G.ORDNER + " › " + G.STAND_DATEI,
     drive: { id: meta.id, modifiedTime: meta.modifiedTime }, driveOffen: false, ungesichert: false, aenderung: 0 };
   persist(false); render(); toast("Aktueller Stand aus Google Drive geladen");
 }
@@ -203,9 +222,28 @@ function renderStart() {
    <label>Excel-Datei auswählen<input type="file" id="xlsxfile" accept=".xlsx"></label></section>`;
 }
 const abcTag = c => `<span class="abc abc-${c.abc}">${c.abc}</span>`;
+/* ---------- Umsatzentwicklung ---------- */
+const ruecklaeufig = c => c.trend != null && isFinite(c.trend) && c.trend <= -0.2;
+const prozent = t => (t > 0 ? "+" : "−") + Math.abs(Math.round(t * 100)) + " %";
+// kurz für Listen: ▲/▼ ab 10 % Veränderung
+function trendKurz(c) {
+  if (c.trend == null) return "";
+  if (!isFinite(c.trend)) return ` · <span class="ok">neu ${String(P.trendInfo().jahr).slice(2)}</span>`;
+  if (Math.abs(c.trend) < 0.1) return "";
+  return c.trend < 0 ? ` · <span class="warn">▼ ${prozent(c.trend)}</span>` : ` · <span class="ok">▲ ${prozent(c.trend)}</span>`;
+}
+// ausführlich für die Kundenansicht
+function trendLang(c) {
+  const T = P.trendInfo(); if (!T || c.trend == null) return "";
+  const j = String(T.jahr).slice(2), bis = T.stand ? " bis " + fmtD(T.stand).slice(0, 6) : "";
+  const neu = `Umsatz ${j}${bis}: ${eur(c.trendNeu)}${T.anteil < 1 ? ` → aufs Jahr hochgerechnet ca. ${eur(c.trendHoch)}` : ""}`;
+  const verg = !isFinite(c.trend) ? `<span class="ok">neuer Umsatz (${T.vorjahr} ohne Umsatz)</span>`
+    : `Vorjahr ${eur(c.trendAlt)} · <span class="${c.trend < 0 ? "warn" : "ok"}">${c.trend < 0 ? "▼" : "▲"} ${prozent(c.trend)}</span>`;
+  return `<dt>Entwicklung</dt><dd>${neu} · ${verg}</dd>`;
+}
 function dueText(c) {
   const w = c.since == null ? "noch nie besucht" : "zuletzt vor " + Math.round(c.since / 7) + " Wo.";
-  return "Umsatz " + S().umsatzJahr + ": " + eur(c.uPlan) + " · " + w + (c.gapOk ? "" : " · Mindestabstand noch nicht erreicht");
+  return "Umsatz " + S().umsatzJahr + ": " + eur(c.uPlan) + trendKurz(c) + " · " + w + (c.gapOk ? "" : " · Mindestabstand noch nicht erreicht");
 }
 const telLink = t => t ? `<a href="tel:${esc(t.replace(/[^\d+]/g, ""))}">${esc(t)}</a>` : "";
 // Navigation zu einem Kunden: auf dem iPhone Apple Karten, sonst Google Maps. Es wird nur die Adresse übergeben (kein Firmenname).
@@ -414,14 +452,17 @@ function renderList() {
   if (FILTER.merkmal) L = L.filter(c => istJa((c.extra || {})[FILTER.merkmal]));
   if (FILTER.due) L = L.filter(P.el);
   if (FILTER.ohneOh) L = L.filter(c => !c.oh || !c.ohp.known);
-  L.sort((a, b) => b.urg - a.urg);
+  if (FILTER.trend) L = L.filter(ruecklaeufig);
+  if (FILTER.trend) L.sort((a, b) => (b.trendAlt - b.trendHoch) - (a.trendAlt - a.trendHoch)); // größter Verlust in Euro zuerst
+  else L.sort((a, b) => b.urg - a.urg);
   return `<div class="listhead"><div><h2>Kunden</h2><p class="muted">${P.CUST.length} aktiv · ${P.LAENGST() ? "am längsten nicht besuchte zuerst" : "sortiert nach Umsatz " + S().umsatzJahr}</p></div>
    <div class="row"><button class="pri" data-a="new">Kunde hinzufügen</button><button data-a="export">Als Excel sichern</button></div></div>
    <div class="filters"><input type="search" id="q" placeholder="Name, Ort oder PLZ suchen" value="${esc(FILTER.q)}" aria-label="Kunden suchen">
    <select id="fabc" aria-label="Priorität"><option value="">Alle Prioritäten</option>${["A", "B", "C"].map(x => `<option ${FILTER.abc === x ? "selected" : ""}>${x}</option>`).join("")}</select>
    ${haekchenSpalten().length ? `<select id="fmerkmal" aria-label="Merkmal"><option value="">Alle Kunden</option>${haekchenSpalten().map(s => `<option value="${esc(s)}" ${FILTER.merkmal === s ? "selected" : ""}>nur ${esc(s)}</option>`).join("")}</select>` : ""}
    <label class="chk"><input type="checkbox" id="fdue" ${FILTER.due ? "checked" : ""}> nur planbare</label>
-   <label class="chk"><input type="checkbox" id="foh" ${FILTER.ohneOh ? "checked" : ""}> ohne Öffnungszeiten (${P.CUST.filter(c => !c.oh || !c.ohp.known).length})</label></div>
+   <label class="chk"><input type="checkbox" id="foh" ${FILTER.ohneOh ? "checked" : ""}> ohne Öffnungszeiten (${P.CUST.filter(c => !c.oh || !c.ohp.known).length})</label>
+   ${P.trendInfo() && !P.trendInfo().zuFrueh ? `<label class="chk"><input type="checkbox" id="ftrend" ${FILTER.trend ? "checked" : ""}> Umsatz rückläufig (${P.CUST.filter(ruecklaeufig).length})</label>` : ""}</div>
    <ul class="clist">${L.slice(0, 200).map(c => `<li><button class="crow" data-a="open" data-id="${c.id}">${abcTag(c)}<span class="cn">${esc(c.n1)}<small>${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)}${merkmaleKurz(c)}${c.out && P.startBekannt() ? " · außerhalb des Gebiets, wird nicht eingeplant" : ""}${c.planHold ? " · aus der Planung genommen" : ""}${c.isNew ? " · neu angelegt" : ""}${terminKurz(c.id)}</small></span>
    <span class="cd">${dueText(c)}</span></button></li>`).join("")}</ul>${L.length > 200 ? `<p class="muted">${L.length - 200} weitere – bitte Suche nutzen.</p>` : ""}`;
 }
@@ -434,6 +475,9 @@ function renderSettings() {
   <div class="sets"><fieldset><legend>Planungsgrundlage</legend>
    <label>Kunden auswählen nach<select data-s="grundlage">${[["umsatz", "Umsatz (umsatzstärkste zuerst)"], ["laengst", "Am längsten nicht besuchte Kunden zuerst"]].map(([v, l]) => `<option value="${v}" ${s.grundlage === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
    <label>Umsatz-Jahr für die Planung<select data-s="umsatzJahr" data-zahl="1">${umsatzAuswahl()}</select></label>
+   ${P.trendInfo() ? `<label>Umsätze ${P.trendInfo().jahr} gelten bis (Stand der Liste, leer = heute)<input type="date" data-s="umsatzStand" value="${esc(s.umsatzStand || "")}"></label>
+   <p class="muted">Damit wird ${P.trendInfo().jahr} für den Vergleich mit ${P.trendInfo().vorjahr} aufs ganze Jahr hochgerechnet. „Kundenliste abgleichen“ trägt das Datum aus dem Dateinamen selbst ein.</p>
+   <label class="chk"><input type="checkbox" data-s="trendBevorzugen" ${s.trendBevorzugen ? "checked" : ""}> Kunden mit rückläufigem Umsatz (ab −20 %) bevorzugt einplanen</label>` : ""}
    ${f("abstandWochen", "Mindestabstand zwischen zwei Besuchen (Wochen)")}
    <p class="muted">${P.LAENGST() ? "Kunden, deren letzter Besuch am längsten zurückliegt, werden zuerst eingeplant (noch nie besuchte ganz vorn), auch Kunden ohne Umsatz." : "Die umsatzstärksten Kunden werden zuerst eingeplant, nur Kunden mit Umsatz im gewählten Jahr."} Wer innerhalb des Mindestabstands besucht wurde, wird übersprungen.</p></fieldset>
   <fieldset><legend>Woche und Übernachtung</legend>
@@ -470,6 +514,8 @@ function renderSettings() {
    <p class="muted">„Umsatz 26“, „Umsatz 27“ … werden automatisch als Umsatz-Spalte erkannt und vor die älteren Umsatz-Spalten gestellt.</p></fieldset>
   <fieldset><legend>Daten</legend>
    <p class="muted">Stand: ${esc(DATA.quelle || "–")}${G.konfiguriert() ? "" : `<br>Gespeichert auf diesem Gerät.${DATA.ungesichert ? ` <span class="warn">Es gibt Änderungen, die noch nicht als Excel gesichert sind.</span>` : ""}`}</p>
+   ${G.konfiguriert() ? `<p class="muted">Sicherungen: einmal pro Woche und vor jedem Kundenlisten-Abgleich in Google Drive › ${G.ORDNER} › ${G.SICHERUNG_ORDNER}. Letzte Sicherung: ${DATA.sicherung ? fmtD(DATA.sicherung) : "noch keine"}.</p>
+   <button data-a="sichern" ${driveBereit() ? "" : "disabled"}>Jetzt sichern</button>` : ""}
    ${ORDNER ? `<button class="pri" data-a="ordnerspeichern">Im Tourenplaner-Ordner als Excel speichern</button>` : ""}
    <button ${ORDNER ? "" : `class="pri"`} data-a="export">Excel herunterladen</button>
    ${ORDNER && ORDNER.stand ? `<button data-a="ordnerladen">Neuesten Stand aus dem Ordner laden</button>` : ""}
@@ -501,7 +547,7 @@ function standUebernehmen(name, daten) {
   if (DATA && DATA.ungesichert && !confirm("Auf diesem Gerät gibt es Änderungen, die noch nicht als Excel gesichert sind. Trotzdem den Stand aus „" + name + "“ laden?")) return;
   Sp.sichern();
   const drive = DATA && DATA.drive;
-  DATA = { kunden: st.kunden, einst: st.einst, plan: st.plan, plaene: st.plaene, kalLoeschen: st.kalLoeschen, spalten: st.spalten, spaltenArten: st.spaltenArten, termine: st.termine, quelle: name + " (geladen " + fmtD(today()) + ")", ungesichert: false, drive, driveOffen: true, aenderung: 1 };
+  DATA = { kunden: st.kunden, einst: st.einst, plan: st.plan, plaene: st.plaene, sicherung: st.sicherung, kalLoeschen: st.kalLoeschen, spalten: st.spalten, spaltenArten: st.spaltenArten, termine: st.termine, quelle: name + " (geladen " + fmtD(today()) + ")", ungesichert: false, drive, driveOffen: true, aenderung: 1 };
   planeAbgleich();
   persist(false); TAB = "plan"; render();
   toast(st.kunden.length + " Kunden geladen");
@@ -533,7 +579,7 @@ function openCustomer(id) {
    <dt>E-Mail</dt><dd>${c.mail ? `<a href="mailto:${esc(c.mail)}">${esc(c.mail)}</a>` : "–"}</dd>
    <dt>Ansprechpartner</dt><dd>${esc(c.ap || "–")}${c.pos ? " (" + esc(c.pos) + ")" : ""}${c.dk ? " · " + esc(c.dk) : ""}</dd>
    <dt>Öffnungszeiten</dt><dd>${esc(c.oh || "unbekannt")}${c.oh && !c.ohp.known ? `<br><span class="warn">Kann vom Programm nicht gelesen werden – geplant wird mit Mo–Fr 8–18 Uhr. Bitte z. B. so schreiben: Mo-Fr 9-12 und 14:30-18 Uhr</span>` : ""}</dd>
-   <dt>Umsatz</dt><dd>${Object.keys(c.ums || {}).sort().reverse().map(j => j + ": " + eur(c.ums[j])).join(" · ") || "–"}</dd>${Object.entries(c.extra || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
+   <dt>Umsatz</dt><dd>${Object.keys(c.ums || {}).sort().reverse().map(j => j + ": " + eur(c.ums[j])).join(" · ") || "–"}</dd>${trendLang(c)}${Object.entries(c.extra || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
    <dt>Besuch</dt><dd>Letzter: ${fmtD(c.lv)} · Dauer ${P.dauer(c)} Min. · ${c.dHome != null ? Math.round(c.dHome) + " km ab Bremen" : "Lage unbekannt"}</dd>
    <dt>Termin</dt><dd>${tf ? `<b class="termin">${terminText(tf)}</b>${terminHinweis(c, tf.date, tf.time) ? `<br><span class="warn">${esc(terminHinweis(c, tf.date, tf.time))}</span>` : ""}<br>${wocheKnopf(tf.date, "link small")}` : "kein Termin vereinbart"}</dd></dl>
    ${c.planHold ? `<p class="warn">Wird nicht automatisch eingeplant. <button type="button" class="link small" data-a="unhold" data-id="${c.id}">Wieder einplanen</button></p>` : ""}
@@ -714,15 +760,26 @@ function abgleichDialog() {
    <p class="muted">Termine, Notizen, Öffnungszeiten, letzter Besuch und Ihre eigenen Spalten bleiben unverändert. Deaktivierte Kunden bleiben in der Excel-Datei und lassen sich wieder aktivieren.</p>
    ${nichts ? "" : `<div class="row"><button class="pri" value="abglspeichern">Übernehmen</button></div>`}`);
 }
-function abgleichUebernehmen() {
+async function abgleichUebernehmen() {
   if (!ABGL) return;
   const { liste, vorschlag } = ABGL, sel = art => new Set([...document.querySelectorAll(`#dlg input[data-abgl="${art}"]`)].filter(el => el.checked).map(el => el.dataset.id));
   const auswahl = { umsatz: !!($("#abgl-umsatz") || {}).checked, stamm: !!($("#abgl-stamm") || {}).checked, neu: sel("neu"), fehlen: sel("fehlen"), vorlaeufig: sel("vorlaeufig"), reaktiv: sel("reaktiv") };
+  // vorher den bisherigen Stand sichern
+  if (driveBereit()) {
+    try { toast("Sicherung wird angelegt …"); await sicherungAnlegen("vor_Abgleich_" + uhrzeitJetzt()); }
+    catch (e) { if (!confirm("Die Sicherung in Google Drive hat nicht geklappt (" + e.message + "). Abgleich trotzdem übernehmen?")) return; }
+  } else if (!confirm("Keine Verbindung zu Google Drive – vorher wird keine Sicherung angelegt. Tipp: erst „Excel herunterladen“. Abgleich trotzdem übernehmen?")) return;
   const erg = abgleichAnwenden(DATA.kunden, liste, vorschlag, auswahl);
   erg.umbenennen.forEach(([alt, neu]) => kundeUmbenennen(alt, neu));
   // neue Umsatz-Spalten (z. B. „Umsatz 27“) vor die älteren stellen
   const sp = DATA.spalten && DATA.spalten.length ? DATA.spalten : STANDARD_REIHENFOLGE.slice();
   for (const j of liste.jahre.slice().reverse()) if (!sp.some(s => umsatzJahr(s) === j)) { const i = sp.findIndex(s => umsatzJahr(s)); sp.splice(i < 0 ? sp.length : i, 0, "Umsatz " + String(j).slice(2)); }
+  // Stand der Umsätze (für die Hochrechnung): Datum aus dem Dateinamen, z. B. „… zum 7.10.2026.xlsx“, sonst heute
+  if (auswahl.umsatz && liste.jahre[0] === new Date().getFullYear()) {
+    const m = String(ABGL.datei).match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+    const d = m ? m[3] + "-" + m[2].padStart(2, "0") + "-" + m[1].padStart(2, "0") : today();
+    DATA.einst.umsatzStand = /^\d{4}-\d\d-\d\d$/.test(d) && +d.slice(0, 4) === liste.jahre[0] ? d : today();
+  }
   DATA.spalten = sp; ABGL = null; geaendert();
   const t = [erg.umsatz && erg.umsatz + " Umsätze", erg.neu && erg.neu + " neue Kunden", erg.umbenennen.length && erg.umbenennen.length + " Kd.-Nr. vergeben",
     erg.deaktiviert && erg.deaktiviert + " deaktiviert", erg.reaktiviert && erg.reaktiviert + " wieder aktiv", erg.stamm && erg.stamm + " Adressen aktualisiert"].filter(Boolean);
@@ -788,7 +845,7 @@ function dlgAktion(v, btn) {
   if (v === "edit") { editDialog(id); return; }
   if (v === "appt") { terminDialog(id); return; }
   if (v === "tagabspeichern") { tagAbschliessen(btn.dataset.week, +btn.dataset.d); return; }
-  if (v === "abglspeichern") { abgleichUebernehmen(); return; }
+  if (v === "abglspeichern") { abgleichUebernehmen().catch(e => { console.error(e); toast("Fehler: " + e.message); }); return; }
   if (v === "saveappt") { terminSpeichern(id); return; }
   if (v === "delappt") {
     const f = TERMINE()[id]; if (!f || !confirm("Termin am " + fmtD(f.date) + " um " + f.time + " Uhr absagen?")) return;
@@ -851,6 +908,7 @@ document.addEventListener("click", async e => {
   try {
     if (a === "plan") doPlan();
     if (a === "plan4") vierWochenPlanen();
+    if (a === "sichern") { const n = await sicherungAnlegen(uhrzeitJetzt()); render(); toast("Gesichert: " + n); }
     if (a === "tagab") tagAbschliessenDialog(b.dataset.week, +b.dataset.d);
     if (a === "wzeigen") { DATA.plan = planVon(b.dataset.week) || DATA.plan; persist(false); render(); scrollTo(0, 0); }
     if (a === "spalteneu") spalteHinzufuegen();
@@ -881,6 +939,7 @@ document.addEventListener("change", async e => {
   if (t.id === "fmerkmal") { FILTER.merkmal = t.value; render(); }
   if (t.id === "fdue") { FILTER.due = t.checked; render(); }
   if (t.id === "foh") { FILTER.ohneOh = t.checked; render(); }
+  if (t.id === "ftrend") { FILTER.trend = t.checked; render(); }
   if (t.id === "wk" && $("#ovwahl") && (!PLAN() || t.value !== PLAN().week)) $("#ovwahl").value = "auto"; // neue Woche: Übernachtung wieder automatisch
   if (t.id === "abglfile" && t.files[0]) {
     try { await abgleichStarten(t.files[0]); } catch (err) { console.error(err); toast("Liste konnte nicht gelesen werden: " + err.message); }
@@ -894,7 +953,7 @@ document.addEventListener("change", async e => {
     const k = t.dataset.s;
     DATA.einst[k] = t.type === "checkbox" ? t.checked : t.dataset.zahl ? +t.value : (t.type === "number" ? (t.value === "" ? DEFAULTS[k] : +t.value) : t.value.trim());
     if (k === "start") DATA.einst.startKoord = ""; // neue Adresse: Lage aus der PLZ bestimmen
-    persist(); aufbereiten(); if (k === "grundlage" || k === "orsKey" || k === "start" || k === "umsatzJahr") render(); toast("Einstellung gespeichert");
+    persist(); aufbereiten(); if (["grundlage", "orsKey", "start", "umsatzJahr", "umsatzStand", "trendBevorzugen"].includes(k)) render(); toast("Einstellung gespeichert");
     if (k === "start" && DATA.einst.orsKey) fzBerechnen(false);
     if (k === "orsKey" && DATA.einst.orsKey) fzBerechnen(true);
     if (k === "calSync" && DATA.einst.calSync) planeAbgleich();

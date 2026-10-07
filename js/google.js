@@ -82,12 +82,39 @@ export async function dateiSpeichern(name, inhalt, typ, id) {
     const r = await api(`${UPLOAD}/${id}?uploadType=media&fields=id,modifiedTime`, { method: "PATCH", headers: { "Content-Type": typ }, body: inhalt }, [404]);
     if (r.ok) return r.json();
   }
-  const o = await ordnerId();
+  return anlegen(name, inhalt, typ, await ordnerId());
+}
+// Neue Datei in einem Ordner anlegen
+async function anlegen(name, inhalt, typ, ordner) {
   const grenze = "tourenplaner" + Date.now();
-  const kopf = `--${grenze}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [o] })}\r\n--${grenze}\r\nContent-Type: ${typ}\r\n\r\n`;
+  const kopf = `--${grenze}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [ordner] })}\r\n--${grenze}\r\nContent-Type: ${typ}\r\n\r\n`;
   const body = new Blob([kopf, inhalt, `\r\n--${grenze}--`]);
   const r = await api(`${UPLOAD}?uploadType=multipart&fields=id,modifiedTime`, { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + grenze }, body });
   return r.json();
+}
+
+/* ---------- Sicherungen (Unterordner „Sicherungen“ im Ordner „Tourenplaner“) ---------- */
+export const SICHERUNG_ORDNER = "Sicherungen";
+async function sicherungsOrdner(neuSuchen) {
+  const g = lesen(); if (g.sicherungen && !neuSuchen) return g.sicherungen;
+  const o = await ordnerId();
+  const f = await suchen(`name='${SICHERUNG_ORDNER}' and mimeType='application/vnd.google-apps.folder' and '${o}' in parents`);
+  let id = f[0]?.id;
+  if (!id) {
+    const r = await api(DRIVE + "?fields=id", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: SICHERUNG_ORDNER, mimeType: "application/vnd.google-apps.folder", parents: [o] }) });
+    id = (await r.json()).id;
+  }
+  const g2 = lesen(); g2.sicherungen = id; schreiben(g2); return id;
+}
+// Sicherungskopie ablegen; eine vorhandene Datei mit gleichem Namen bleibt unangetastet (Rückgabe dann null)
+export async function sicherungSpeichern(name, inhalt, typ) {
+  for (const neu of [false, true]) { // falls der Ordner inzwischen gelöscht wurde: einmal neu suchen/anlegen
+    try {
+      const o = await sicherungsOrdner(neu);
+      if ((await suchen(`name='${name}' and '${o}' in parents`)).length) return null;
+      return await anlegen(name, inhalt, typ, o);
+    } catch (e) { if (neu || e.code === "anmelden") throw e; }
+  }
 }
 
 /* ---------- Google Kalender ---------- */

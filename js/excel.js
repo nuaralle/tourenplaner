@@ -108,6 +108,7 @@ export function leseStand(XLSX, daten) {
       if (typeof def === "number") einst[key] = zahl(z.Wert);
       else if (typeof def === "boolean") einst[key] = ja(z.Wert);
       else if (/^\d\d:\d\d$/.test(def)) einst[key] = uhrzeit(z.Wert) || def;
+      else if (key === "umsatzStand") einst[key] = datum(z.Wert);
       else einst[key] = txt(z.Wert);
     }
   }
@@ -124,8 +125,9 @@ export function leseStand(XLSX, daten) {
     termine[id] = { date: d, time: t }; if (txt(z["Kalender-Eintrag"])) { termine[id].ev = txt(z["Kalender-Eintrag"]); termine[id].cal = "ok"; }
   }
   for (const p of plaene) { for (const id in p.fixed) if (!termine[id]) termine[id] = p.fixed[id]; p.fixed = termine; }
-  let kalLoeschen = [], spaltenArten = {};
+  let kalLoeschen = [], spaltenArten = {}, sicherung = "";
   if (wb.Sheets["Intern"]) for (const z of XLSX.utils.sheet_to_json(wb.Sheets["Intern"], { defval: "" })) {
+    if (z["Schlüssel"] === "sicherung") sicherung = datum(z.Wert);
     if (z["Schlüssel"] === "kalLoeschen") try { kalLoeschen = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "abgeschlossen") try { const tage = new Set(JSON.parse(z.Wert) || []); plaene.forEach(p => p.days.forEach(D => { if (tage.has(D.date)) D.abgeschlossen = true; })); } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "spaltenArten") try { spaltenArten = JSON.parse(z.Wert) || {}; } catch (e) { /* egal */ }
@@ -134,7 +136,7 @@ export function leseStand(XLSX, daten) {
       for (const p of plaene) { const v = typeof w === "object" && w ? w[p.week] : w; if (/^(auto|0-1|1-2|2-3)$/.test(String(v))) p.uebernachtung = String(v); }
     }
   }
-  return { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten };
+  return { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten, sicherung };
 }
 
 // Zeilen nach Wochen (Montag) aufteilen
@@ -174,7 +176,7 @@ function leseWoche(zeilen, kunden, mon) {
 }
 
 /* ---------- Schreiben ---------- */
-export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten }) {
+export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten, sicherung }) {
   termine = termine || (plan && plan.fixed) || {};
   const wochen = (plaene && plaene.length ? plaene : plan ? [plan] : []).slice().sort((a, b) => a.week.localeCompare(b.week));
   const wb = XLSX.utils.book_new();
@@ -229,6 +231,7 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr, { header: ["Datum", "Uhrzeit", "Kd Nr.", "Kunde", "Kalender-Eintrag"] }), "Termine");
   // Internes Blatt: noch zu löschende Kalendertermine (z. B. wenn ein Termin offline gelöst wurde)
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ "Schlüssel": "kalLoeschen", "Wert": JSON.stringify(kalLoeschen || []) }, { "Schlüssel": "uebernachtung", "Wert": JSON.stringify(Object.fromEntries(wochen.map(p => [p.week, p.uebernachtung || "auto"]))) }, { "Schlüssel": "spaltenArten", "Wert": JSON.stringify(spaltenArten || {}) },
+    { "Schlüssel": "sicherung", "Wert": sicherung || "" },
     { "Schlüssel": "abgeschlossen", "Wert": JSON.stringify(wochen.flatMap(p => p.days.filter(D => D.abgeschlossen).map(D => D.date))) }], { header: ["Schlüssel", "Wert"] }), "Intern");
   return XLSX.write(wb, { type: "array", bookType: "xlsx", compression: true });
 }

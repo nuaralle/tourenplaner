@@ -9,7 +9,7 @@ export const WDS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 export const DEFAULTS = {
   overnightKm: 130, hotelMax: 115, maxVisits: 8, visitMin: 30,
   depart: "07:30", latest: "17:00", latestOv: "18:00", lastVisitDay1: "18:00", hotelStart: "08:00",
-  grundlage: "umsatz", umsatzJahr: 2025, abstandWochen: 10, calSync: true, overnightDays: "1-2",
+  grundlage: "umsatz", umsatzJahr: 2025, umsatzStand: "", trendBevorzugen: false, abstandWochen: 10, calSync: true, overnightDays: "1-2",
   roadFactor: 1.25, speed: 70, parking: true, zuschlag: 10, orsKey: "", start: "", startKoord: "",
 };
 
@@ -20,6 +20,7 @@ export const EINST_NAMEN = {
   latest: "Späteste Rückkehr Tagestour", latestOv: "Späteste Rückkehr Übernachtungstour (Tag 2)",
   lastVisitDay1: "Letzter Besuchsbeginn vor Hotelnacht", hotelStart: "Abfahrt vom Hotel",
   grundlage: "Planungsgrundlage (umsatz/laengst)", umsatzJahr: "Umsatz-Jahr für die Planung",
+  umsatzStand: "Umsätze des neuesten Jahres gelten bis (Stand der Liste)", trendBevorzugen: "Kunden mit rückläufigem Umsatz bevorzugt einplanen",
   abstandWochen: "Mindestabstand zwischen zwei Besuchen (Wochen)", calSync: "Fixtermine in Google Kalender", overnightDays: "Übernachtungstage (0=Mo)",
   roadFactor: "Umwegfaktor", speed: "Durchschnittstempo (km/h)", parking: "Hotel mit Parkplatz",
   zuschlag: "Zuschlag auf echte Fahrzeiten (%)", orsKey: "OpenRouteService-Schlüssel",
