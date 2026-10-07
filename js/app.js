@@ -224,21 +224,28 @@ function renderStart() {
 const abcTag = c => `<span class="abc abc-${c.abc}">${c.abc}</span>`;
 /* ---------- Umsatzentwicklung ---------- */
 const ruecklaeufig = c => c.trend != null && isFinite(c.trend) && c.trend <= -0.2;
-const prozent = t => (t > 0 ? "+" : "−") + Math.abs(Math.round(t * 100)) + " %";
-// kurz für Listen: ▲/▼ ab 10 % Veränderung
+const prozent = t => Math.round(t * 100) === 0 ? "±0 %" : (t > 0 ? "+" : "−") + Math.abs(Math.round(t * 100)) + " %";
+const trendBewertbar = () => { const T = P.trendInfo(); return T && !T.zuFrueh ? T : null; };
+// Pfeil/Zeichen: ▲/▼ ab 10 % Veränderung, ● darunter (gleichbleibend)
+function trendZeichen(t) {
+  if (Math.abs(t) < 0.1) return `<span class="muted">● ${prozent(t)}</span>`;
+  return t < 0 ? `<span class="warn">▼ ${prozent(t)}</span>` : `<span class="ok">▲ ${prozent(t)}</span>`;
+}
+// kurz für Listen – bei jedem Kunden, sobald die Entwicklung bewertbar ist
 function trendKurz(c) {
-  if (c.trend == null) return "";
-  if (!isFinite(c.trend)) return ` · <span class="ok">neu ${String(P.trendInfo().jahr).slice(2)}</span>`;
-  if (Math.abs(c.trend) < 0.1) return "";
-  return c.trend < 0 ? ` · <span class="warn">▼ ${prozent(c.trend)}</span>` : ` · <span class="ok">▲ ${prozent(c.trend)}</span>`;
+  const T = trendBewertbar(); if (!T) return "";
+  if (c.trend == null) return ` · <span class="muted">kein Umsatz ${String(T.vorjahr).slice(2)}/${String(T.jahr).slice(2)}</span>`;
+  if (!isFinite(c.trend)) return ` · <span class="ok">neu ${String(T.jahr).slice(2)}</span>`;
+  return " · " + trendZeichen(c.trend);
 }
 // ausführlich für die Kundenansicht
 function trendLang(c) {
-  const T = P.trendInfo(); if (!T || c.trend == null) return "";
+  const T = trendBewertbar(); if (!T) return "";
+  if (c.trend == null) return `<dt>Entwicklung</dt><dd class="muted">kein Umsatz ${T.vorjahr} und ${T.jahr}</dd>`;
   const j = String(T.jahr).slice(2), bis = T.stand ? " bis " + fmtD(T.stand).slice(0, 6) : "";
   const neu = `Umsatz ${j}${bis}: ${eur(c.trendNeu)}${T.anteil < 1 ? ` → aufs Jahr hochgerechnet ca. ${eur(c.trendHoch)}` : ""}`;
   const verg = !isFinite(c.trend) ? `<span class="ok">neuer Umsatz (${T.vorjahr} ohne Umsatz)</span>`
-    : `Vorjahr ${eur(c.trendAlt)} · <span class="${c.trend < 0 ? "warn" : "ok"}">${c.trend < 0 ? "▼" : "▲"} ${prozent(c.trend)}</span>`;
+    : `Vorjahr ${eur(c.trendAlt)} · ${trendZeichen(c.trend)}${Math.abs(c.trend) < 0.1 ? " (gleichbleibend)" : ""}`;
   return `<dt>Entwicklung</dt><dd>${neu} · ${verg}</dd>`;
 }
 function dueText(c) {
