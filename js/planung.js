@@ -153,6 +153,7 @@ export function planWeek(mondayISO, excluded, fixed, uebernachtung, belegt) {
   setzeBelegt(belegt);
   const plan = planWeekTage(mondayISO, excluded, fixed, uebernachtung);
   plan.uebernachtung = uebernachtung;
+  tauschPruefung(plan); // volle Tage: deutlich wichtigere Kunden in der Nähe gegen schwächere tauschen
   for (const D of plan.days) feinschliff(D); // zum Schluss: schnellste Reihenfolge je Tag
   return plan;
 }
@@ -250,13 +251,17 @@ export function feinschliff(D) {
   const grenze = e.limit != null ? Math.max(e.limit, jetzt.end) : null;
   const gueltig = s => s.ok && !s.legs.some(L => L.fixed && L.verz > (verz[L.id] || 0) + 1)
     && (D.type === "ov1" ? s.legs[s.legs.length - 1].begin <= Math.max(tmin(S.lastVisitDay1), jetzt.legs[jetzt.legs.length - 1].begin) : s.end <= grenze);
-  const wertVon = s => (D.type === "ov1" ? s.legs[s.legs.length - 1].leave : s.end) - s.depart + 0.25 * fahrMin(s);
+  // Reihenfolgen, die Öffnungszeiten und die eigentliche Grenze einhalten (Rückkehrzeit bzw. letzter Besuch Tag 1), gewinnen immer –
+  // auch wenn der Tag vorher darüber lag (z. B. nach dem Durcheinanderwürfeln)
+  const ueber = s => !s.ok || (D.type === "ov1" ? s.legs[s.legs.length - 1].begin > tmin(S.lastVisitDay1) : e.limit != null && s.end > e.limit);
+  const wertVon = s => (ueber(s) ? 1e5 : 0) + (D.type === "ov1" ? s.legs[s.legs.length - 1].leave : s.end) - s.depart + 0.25 * fahrMin(s);
   let bestWert = wertVon(jetzt) - 0.5, best = null; // nur wirklich bessere Reihenfolgen übernehmen
   const letzter = D.type === "ov1" ? D.stops[n - 1] : null, frei = letzter ? D.stops.slice(0, -1) : D.stops.slice();
   const seq = [], benutzt = frei.map(() => false); let schritte = 0;
   const rec = (pos, fahr, besuche) => {
     // untere Grenze: bisherige Fahrzeit + Besuchsdauer (+ ein Viertel der Fahrzeit) – schon zu hoch? (bzw. Notbremse)
-    if (1.25 * fahr + besuche >= bestWert || ++schritte > 400000) return;
+    // (solange nur Reihenfolgen über der Grenze bekannt sind, wird nicht abgeschnitten)
+    if (1.25 * fahr + besuche >= (bestWert >= 1e5 ? Infinity : bestWert) || ++schritte > 400000) return;
     if (seq.length === frei.length) {
       const voll = letzter ? seq.concat(letzter) : seq.slice();
       const s = simulate(e.start, e.sMin, voll, D.day, e.end); const wert = wertVon(s);
@@ -302,6 +307,40 @@ function auffuellen(D, frei, genommen) {
     if (!rein) break;
     D.stops = rein;
   }
+}
+/* ---------- Tausch-Prüfung (2026-10-08) ---------- */
+// An vollen Tagen (höchstens Besuche erreicht): Gibt es einen nicht eingeplanten Kunden mit mindestens 20 % mehr Umsatz
+// (bzw. Wichtigkeit) als ein eingeplanter, wird getauscht – wenn der Tag dadurch höchstens 40 km länger wird und alle Regeln
+// eingehalten bleiben (Öffnungszeiten, feste Termine, Rückkehrzeit, Mindestabstand). Feste Termine werden nie getauscht,
+// an Tag 1 einer Übernachtung bleibt der letzte Besuch (Hotelort). Bei „am längsten nicht besucht“ wird nicht getauscht.
+export const TAUSCH_MEHR = 1.2, TAUSCH_KM = 40; // 40 km: Wunsch 2026-10-08, damit auch Kunden am Rand des Gebiets reinkommen
+export function tauschPruefung(plan, nurTag) {
+  if (LAENGST()) return 0;
+  let n = 0;
+  for (const D of plan.days) {
+    if (D.type === "home" || (nurTag && D !== nurTag)) continue;
+    const fern = D.type === "tour" ? (() => true) : (c => c.dHome > S.overnightKm * 0.5); // wie beim Auffüllen
+    for (let runde = 0; runde < S.maxVisits && D.stops.length >= S.maxVisits; runde++) {
+      const st = D.stops.map(byId).filter(Boolean);
+      const hotelId = D.type === "ov1" ? D.stops[D.stops.length - 1] : null;
+      const weg = st.filter(c => !(FIX[c.id] && FIX[c.id].day === D.day) && c.id !== hotelId).sort((a, b) => a.urg - b.urg);
+      if (!weg.length) break;
+      const vorherKm = simDay(D).km;
+      const kand = ersatzKandidaten(plan, D).filter(c => fern(c) && c.urg >= weg[0].urg * TAUSCH_MEHR && st.some(x => km(x, c) <= 50))
+        .sort((a, b) => b.urg - a.urg).slice(0, 40);
+      let neu = null;
+      suche: for (const c of kand) for (const w of weg) {
+        if (c.urg < w.urg * TAUSCH_MEHR) break; // weg ist aufsteigend sortiert
+        const T = { ...D, stops: D.stops.filter(id => id !== w.id) };
+        const r = hotelId ? insertBest(T, c.id, false, T.stops.length - 1) : tryInsert(T, c.id);
+        const s = r && feasible(D, r);
+        if (s && s.km - vorherKm <= TAUSCH_KM) { neu = r; break suche; }
+      }
+      if (!neu) break;
+      D.stops = neu; n++;
+    }
+  }
+  return n;
 }
 // Start/Ende und späteste Rückkehr eines Tages
 export function dayEnds(D) {
