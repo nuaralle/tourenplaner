@@ -273,17 +273,18 @@ function bookingUrl(h, date) {
 
 // Warum in der geplanten Woche keine Übernachtung zustande kam
 function ovGrund(PL) {
-  const wahl = PL.uebernachtung && PL.uebernachtung !== "auto" ? PL.uebernachtung : null;
+  const wahl = P.ovGueltig(PL.uebernachtung) ? PL.uebernachtung : null;
   const tage = wahl ? wahl.split("-").map(Number) : [0, 1, 2, 3];
   const fx = Object.entries(TERMINE()).map(([id, f]) => ({ c: byId(id), f, di: Math.round((parseISO(f.date) - parseISO(PL.week)) / 864e5) }))
     .filter(x => x.c && tage.includes(x.di) && !(x.c.dHome > S().overnightKm * 0.7));
   const label = wahl ? "Übernachtung " + P.UEBERNACHTUNG.find(u => u[0] === wahl)[1] : "Übernachtung";
-  if (wahl && fx.length) return `${label} geht nicht: Termin bei ${fx.map(x => x.c.n1 + " (" + WDS[x.di] + " " + x.f.time + ")").join(", ")} liegt nicht im Übernachtungsgebiet. Bitte andere Tage oder „Automatisch“ wählen und neu planen.`;
+  if (wahl && fx.length) return `${label} geht nicht: Termin bei ${fx.map(x => x.c.n1 + " (" + WDS[x.di] + " " + x.f.time + ")").join(", ")} liegt nicht im Übernachtungsgebiet. Bitte andere Tage wählen und neu planen.`;
   if (!wahl && fx.length >= 2) return "An allen möglichen Übernachtungstagen liegen Termine in der Nähe von Bremen.";
   return `Kein passendes Gebiet über ${S().overnightKm} km mit fälligen Kunden gefunden.`;
 }
 // Auswahl, wann in der geplanten Woche übernachtet wird
-const ovAuswahl = wert => `<label>Übernachtung <select id="ovwahl">${P.UEBERNACHTUNG.map(([v, l]) => `<option value="${v}" ${v === wert ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
+// Kein Standard: bei einer neuen Woche steht „bitte wählen“, die Nacht wird jede Woche selbst gewählt
+const ovAuswahl = wert => `<label>Übernachtung <select id="ovwahl" required><option value="" ${P.ovGueltig(wert) ? "" : "selected"}>– bitte wählen –</option>${P.UEBERNACHTUNG.map(([v, l]) => `<option value="${v}" ${v === wert ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
 /* ---------- Tag abschließen ---------- */
 const besucht = (id, datum) => { const k = roh(id); return !!(k && k.lv && k.lv >= datum); };
 // Besuche vergangener Tage, die weder als besucht erfasst noch abgeschlossen sind
@@ -337,14 +338,14 @@ function renderPlan() {
   const ws = PL ? PL.week : iso(P.weekStart());
   if (!P.startBekannt()) return `<section class="empty"><h2>Startadresse fehlt</h2><p>Bitte unter <b>Einstellungen › Tagesablauf</b> Ihre Startadresse (zu Hause) mit PLZ eintragen.</p></section>`;
   if (!PL) return `<section class="empty"><h2>Noch keine Woche geplant</h2><p>Der Planer sucht fällige Kunden heraus, bündelt sie zu Tagestouren und plant eine Übernachtungstour für Gebiete über ${S().overnightKm} km. Freitag bleibt Home-Office.</p>
-    <div class="row"><label>Woche ab <input type="date" id="wk" value="${ws}"></label>${ovAuswahl("auto")}<button class="pri" data-a="plan">Woche planen</button><button data-a="plan4">4 Wochen planen</button></div></section>`;
+    <div class="row"><label>Woche ab <input type="date" id="wk" value="${ws}"></label>${ovAuswahl("")}<button class="pri" data-a="plan">Woche planen</button><button data-a="plan4">4 Wochen planen</button></div></section>`;
   const alt = P.alternativen(PL);
   const legs = PL.days.filter(D => D.type !== "home").flatMap(D => P.simDay(D).legs);
   const nGesch = legs.filter(L => L.geschaetzt).length;
   const fzText = !legs.length ? "" : nGesch === 0 ? `Echte Fahrzeiten (OpenRouteService${+S().zuschlag ? ", +" + S().zuschlag + " % Zuschlag" : ""})`
     : nGesch === legs.length ? "Entfernungen und Fahrzeiten sind noch Schätzungen" : "Fahrzeiten teilweise geschätzt (≈)";
   let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}</p></div>
-   <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung || "auto")}<button class="pri" data-a="plan">Neu planen</button><button data-a="plan4">4 Wochen planen</button></div></div>
+   <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung)}<button class="pri" data-a="plan">Neu planen</button><button data-a="plan4">4 Wochen planen</button></div></div>
    ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze Norddeutschland"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
   PL.days.forEach((D, di) => {
     const date = fmtD(D.date);
@@ -500,10 +501,9 @@ function renderSettings() {
    <p class="muted">${P.MERKMAL() ? `Es werden nur Kunden mit Häkchen bei „${esc(P.MERKMAL())}“ eingeplant (${DATA.kunden.filter(k => !k.inactive && P.hatMerkmal(k)).length} Kunden), die umsatzstärksten zuerst. Fehlt in der Nähe ein Alternativ-Kunde mit Häkchen, wird ein anderer Kunde vorgeschlagen.` : P.LAENGST() ? "Kunden, deren letzter Besuch am längsten zurückliegt, werden zuerst eingeplant (noch nie besuchte ganz vorn), auch Kunden ohne Umsatz." : "Die umsatzstärksten Kunden werden zuerst eingeplant, nur Kunden mit Umsatz im gewählten Jahr."} Wer innerhalb des Mindestabstands besucht wurde, wird übersprungen.</p></fieldset>
   <fieldset><legend>Woche und Übernachtung</legend>
    ${f("overnightKm", "Übernachtung ab Fahrstrecke (km)")}
-   <label>Bevorzugte Tage der Übernachtungstour<select data-s="overnightDays">${[["0-1", "Montag/Dienstag"], ["1-2", "Dienstag/Mittwoch"], ["2-3", "Mittwoch/Donnerstag"]].map(([v, l]) => `<option value="${v}" ${s.overnightDays === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
    ${f("hotelMax", "Hotelbudget pro Nacht inkl. Frühstück (€)")}
    <label class="chk"><input type="checkbox" data-s="parking" ${s.parking ? "checked" : ""}> Hotel mit Parkplatz</label>
-   <p class="muted">Höchstens eine Übernachtung pro Woche. Im Wochenplan können Sie bei „Übernachtung“ für jede Woche andere Tage wählen; bei „Automatisch“ nimmt die App die bevorzugten Tage, außer ein Termin passt dort nicht. Freitag ist immer Home-Office.</p></fieldset>
+   <p class="muted">Höchstens eine Übernachtung pro Woche. Die Nacht wählen Sie im Wochenplan bei „Übernachtung“ für jede Woche selbst (Mo→Di, Di→Mi oder Mi→Do). Freitag ist immer Home-Office.</p></fieldset>
   <fieldset><legend>Tagesablauf</legend>
    <label>Startadresse (zu Hause)<input type="text" data-s="start" value="${esc(s.start || "")}" placeholder="Straße Nr., PLZ Ort"></label>
    ${P.startBekannt() ? "" : `<p class="warn">Bitte Startadresse mit PLZ eintragen – ohne sie kann nicht geplant werden.</p>`}
@@ -725,10 +725,22 @@ function wocheKnopf(d, cls = "") {
 // Woche eines Termins zeigen – ist sie noch nicht geplant, wird sie geplant (die übrigen Wochen bleiben erhalten)
 function wocheAnsehen(d) {
   const mon = montag(d), da = planVon(mon);
-  if (!da) {
-    aufbereiten(); planSetzen(P.planWeek(mon, [], TERMINE(), "auto", belegtFuer(mon)));
-    TAB = "plan"; geaendert(); toast("Woche ab " + fmtD(mon) + " geplant");
-  } else { DATA.plan = da; TAB = "plan"; persist(false); render(); }
+  if (!da) { // erst die Übernachtung für diese Woche wählen lassen
+    dlg(`<header class="dh"><h3>Woche ab ${fmtD(mon)} planen</h3><button value="x" class="ghost">Schließen</button></header>
+     <p>Wann soll in dieser Woche übernachtet werden?</p><div class="row wrap">${ovAuswahl("")}</div>
+     <div class="row wrap"><button class="pri" value="wocheplanen" data-datum="${esc(d)}">Woche planen</button><button value="x">Abbrechen</button></div>`);
+    return;
+  }
+  DATA.plan = da; TAB = "plan"; persist(false); render();
+  zumTag(d);
+}
+function wocheMitNachtPlanen(d, nacht) {
+  const mon = montag(d);
+  aufbereiten(); planSetzen(P.planWeek(mon, [], TERMINE(), nacht, belegtFuer(mon)));
+  TAB = "plan"; geaendert(); toast("Woche ab " + fmtD(mon) + " geplant");
+  zumTag(d);
+}
+function zumTag(d) {
   const tag = [...document.querySelectorAll("article.day")][wochentag(d)];
   if (tag) tag.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -836,30 +848,39 @@ function editDialog(id) {
 }
 
 /* ---------- Aktionen ---------- */
+// Nacht muss gewählt sein (es gibt keinen Standard mehr)
+function nachtGewaehlt() {
+  const w = $("#main #ovwahl"); if (w && P.ovGueltig(w.value)) return w.value;
+  if (w) { w.focus(); w.reportValidity(); }
+  toast("Bitte zuerst bei „Übernachtung“ die Nacht wählen"); return null;
+}
 function doPlan() {
+  const nacht = nachtGewaehlt(); if (!nacht) return;
   const mon = montag($("#wk").value || iso(P.weekStart()));
   const alt = planVon(mon); // dieselbe Woche neu planen: "nur diese Woche entfernt" bleibt
   aufbereiten();
   // Termine aller Wochen; die Planung nimmt die dieser Woche. Kunden aus den anderen geplanten Wochen kommen nicht doppelt dran.
-  planSetzen(P.planWeek(mon, alt ? alt.excluded : [], TERMINE(), ($("#ovwahl") || {}).value || "auto", belegtFuer(mon)));
+  planSetzen(P.planWeek(mon, alt ? alt.excluded : [], TERMINE(), nacht, belegtFuer(mon)));
   geaendert();
 }
 // 4 Wochen ab der gewählten Woche nacheinander planen (vorhandene Pläne dieser Wochen werden ersetzt)
 function vierWochenPlanen() {
+  const nacht = nachtGewaehlt(); if (!nacht) return;
   const mon = montag($("#wk").value || iso(P.weekStart()));
   const wochen = [0, 1, 2, 3].map(i => iso(addDays(parseISO(mon), 7 * i)));
   const vorhanden = wochen.filter(planVon);
   if (vorhanden.length && !confirm(`Die Wochen ab ${fmtD(mon)} werden neu geplant (${vorhanden.map(w => "KW " + kw(w)).join(", ")} ${vorhanden.length === 1 ? "ist" : "sind"} schon geplant). Feste Termine bleiben erhalten. Weiter?`)) return;
   DATA.plaene = PLAENE().filter(p => !wochen.includes(p.week));
   aufbereiten();
-  const neu = P.planeWochen(mon, 4, TERMINE(), belegtFuer(mon).filter(Boolean));
+  const neu = P.planeWochen(mon, 4, TERMINE(), belegtFuer(mon).filter(Boolean), nacht);
   neu.forEach((p, i) => planSetzen(p, i === 0));
-  geaendert(); toast("4 Wochen geplant: KW " + wochen.map(kw).join(", "));
+  geaendert(); toast("4 Wochen geplant (Übernachtung " + P.UEBERNACHTUNG.find(u => u[0] === nacht)[1] + "), KW " + wochen.map(kw).join(", ") + " – je Woche änderbar");
 }
 // Knopf in einem Dialog wurde gedrückt (direkt ausgeführt, nicht erst beim "close"-Ereignis – das kommt nicht in jedem Browser zuverlässig)
 function dlgAktion(v, btn) {
   const id = btn && btn.dataset.id;
   const PL = PLAN();
+  if (v === "wocheplanen") { wocheMitNachtPlanen(btn.dataset.datum, btn.dataset.nacht); return; }
   if (v === "drivelade" || v === "driveueber") {
     const meta = KONFLIKT; KONFLIKT = null;
     (v === "drivelade" ? vonDriveLaden(meta) : nachDrive(meta.id).then(() => toast("Stand dieses Geräts in Google Drive gespeichert")))
@@ -922,6 +943,7 @@ document.addEventListener("click", async e => {
   if (db) {
     e.preventDefault();
     const fx = $("#fxt"); if (db.value === "savefix" && fx && !fx.value) { fx.reportValidity(); return; }
+    if (db.value === "wocheplanen") { const w = $("#dlg #ovwahl"); if (!P.ovGueltig(w.value)) { w.reportValidity(); return; } db.dataset.nacht = w.value; }
     if (db.value === "saveappt") { const leer = ["#td", "#tt"].map($).find(x => x && !x.value); if (leer) { leer.reportValidity(); return; } }
     $("#dlg").close();
     try { dlgAktion(db.value, db); } catch (err) { console.error(err); toast("Fehler: " + err.message); }
@@ -966,7 +988,7 @@ document.addEventListener("change", async e => {
   if (t.id === "fdue") { FILTER.due = t.checked; render(); }
   if (t.id === "foh") { FILTER.ohneOh = t.checked; render(); }
   if (t.id === "ftrend") { FILTER.trend = t.checked; render(); }
-  if (t.id === "wk" && $("#ovwahl") && (!PLAN() || t.value !== PLAN().week)) $("#ovwahl").value = "auto"; // neue Woche: Übernachtung wieder automatisch
+  if (t.id === "wk" && $("#main #ovwahl") && (!PLAN() || t.value !== PLAN().week)) $("#main #ovwahl").value = ""; // neue Woche: Übernachtung neu wählen
   if (t.id === "abglfile" && t.files[0]) {
     try { await abgleichStarten(t.files[0]); } catch (err) { console.error(err); toast("Liste konnte nicht gelesen werden: " + err.message); }
     t.value = "";

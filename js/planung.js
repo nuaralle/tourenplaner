@@ -141,39 +141,26 @@ function order(start, ids, end, ctx) {
 
 /* ---------- Wochenplanung ---------- */
 export function weekStart(now = new Date()) { const d = new Date(now); const wd = (d.getDay() + 6) % 7; let m = addDays(d, -wd); if (wd >= 3) m = addDays(m, 7); m.setHours(0, 0, 0, 0); return m; }
-// Übernachtung: "auto" (App wählt) oder feste Nächte "0-1" (Mo→Di), "1-2" (Di→Mi), "2-3" (Mi→Do)
-export const UEBERNACHTUNG = [["auto", "Automatisch"], ["0-1", "Mo → Di"], ["1-2", "Di → Mi"], ["2-3", "Mi → Do"]];
+// Übernachtung: wird jede Woche selbst gewählt (kein Standard): "0-1" (Mo→Di), "1-2" (Di→Mi), "2-3" (Mi→Do)
+export const UEBERNACHTUNG = [["0-1", "Mo → Di"], ["1-2", "Di → Mi"], ["2-3", "Mi → Do"]];
+export const ovGueltig = u => UEBERNACHTUNG.some(x => x[0] === u);
 // belegt: Kunden aus anderen geplanten Wochen (werden in dieser Woche nicht noch einmal eingeplant)
-export function planWeek(mondayISO, excluded, fixed, uebernachtung = "auto", belegt) {
+export function planWeek(mondayISO, excluded, fixed, uebernachtung, belegt) {
+  if (!ovGueltig(uebernachtung)) throw new Error("Bitte zuerst bei „Übernachtung“ die Nacht wählen.");
   setzeBelegt(belegt);
-  const plan = uebernachtung === "auto" ? planWeekAuto(mondayISO, excluded, fixed) : planWeekTage(mondayISO, excluded, fixed, uebernachtung);
+  const plan = planWeekTage(mondayISO, excluded, fixed, uebernachtung);
   plan.uebernachtung = uebernachtung;
   for (const D of plan.days) feinschliff(D); // zum Schluss: schnellste Reihenfolge je Tag
   return plan;
 }
 // Mehrere Wochen nacheinander planen: wer in einer Woche eingeplant ist, kommt in den folgenden nicht noch einmal dran.
-export function planeWochen(startMonISO, anzahl, fixed, belegt = []) {
+export function planeWochen(startMonISO, anzahl, fixed, belegt = [], uebernachtung) {
   const gesamt = new Set(belegt), plaene = [];
   for (let i = 0; i < anzahl; i++) {
-    const plan = planWeek(iso(addDays(parseISO(startMonISO), 7 * i)), [], fixed, "auto", gesamt);
+    const plan = planWeek(iso(addDays(parseISO(startMonISO), 7 * i)), [], fixed, uebernachtung, gesamt);
     plan.days.forEach(D => D.stops.forEach(id => gesamt.add(id))); plaene.push(plan);
   }
   return plaene;
-}
-// Automatisch: zuerst Nächte mit einem festen Termin weit draußen, dann die bevorzugten Tage aus den Einstellungen,
-// dann die übrigen – genommen wird die erste Variante, in der eine Übernachtung zustande kommt.
-function planWeekAuto(mondayISO, excluded, fixed) {
-  fixed = fixed || {}; const mon = parseISO(mondayISO);
-  const paare = ["0-1", "1-2", "2-3"], bevorzugt = paare.includes(S.overnightDays) ? S.overnightDays : "1-2";
-  const weitTage = Object.entries(fixed).map(([id, f]) => ({ c: byId(id), di: Math.round((parseISO(f.date) - mon) / 864e5) }))
-    .filter(x => x.c && x.di >= 0 && x.di <= 3 && x.c.dHome > S.overnightKm * 0.7).map(x => x.di);
-  const reihe = [...new Set([...paare.filter(p => p.split("-").map(Number).some(d => weitTage.includes(d))), bevorzugt, ...paare])];
-  let erster = null;
-  for (const p of reihe) {
-    const plan = planWeekTage(mondayISO, excluded, fixed, p); erster = erster || plan;
-    if (plan.days.some(D => D.type === "ov1")) { plan.uebernachtung = "auto"; return plan; }
-  }
-  erster.uebernachtung = "auto"; return erster;
 }
 function planWeekTage(mondayISO, excluded, fixed, uebernachtung) {
   fixed = fixed || {}; setFix(fixed, mondayISO); setzeStichtag(mondayISO);
