@@ -20,14 +20,32 @@ let SPEICHER_OK = true, SYNC_LAEUFT = false, SYNC_FEHLER = "", KONFLIKT = null, 
 let FZ = F.neueTabelle(), FZ_LAEUFT = "", FZ_MELDUNG = "";
 const S = () => P.S;
 const PLAN = () => DATA && DATA.plan; // die gerade angezeigte Woche
-// Alle geplanten Wochen (bis zu 4 im Voraus und die letzten 4 Wochen zum Abschließen der Tage).
+// Höchstens so viele kommende Wochen sind geplant (2026-10-08). Die 2. Woche wird nur auf Knopfdruck geplant.
+// Termine gehen trotzdem für jedes Datum; die Woche wird um sie herum geplant, sobald sie geplant wird.
+const MAX_WOCHEN = 2;
+// Alle geplanten Wochen (kommende und die letzten 4 Wochen zum Abschließen der Tage; oben angezeigt werden nur die kommenden).
 // DATA.plan ist immer eine davon (nach dem Laden aus dem Gerätespeicher wird sie wieder verknüpft).
 function PLAENE() {
   if (!DATA.plaene) DATA.plaene = DATA.plan ? [DATA.plan] : [];
   const grenze = iso(addDays(parseISO(montag(today())), -28));
   DATA.plaene = DATA.plaene.filter(p => p.week >= grenze).sort((a, b) => a.week.localeCompare(b.week));
-  if (DATA.plan) DATA.plan = DATA.plaene.find(p => p.week === DATA.plan.week) || DATA.plaene.find(p => p.week >= montag(today())) || DATA.plaene[DATA.plaene.length - 1] || null;
+  if (DATA.plan) DATA.plan = DATA.plaene.find(p => p.week === DATA.plan.week) || null;
+  if (DATA.plan && DATA.plan.week < ab()) DATA.plan = null; // vergangene Woche nicht mehr anzeigen
+  if (!DATA.plan) DATA.plan = DATA.plaene.find(p => p.week >= ab()) || null;
   return DATA.plaene;
+}
+// erste Woche, die noch geplant werden kann (Mo–Mi diese Woche, ab Donnerstag die nächste)
+const ab = () => iso(P.weekStart());
+// kommende geplante Wochen (nur diese stehen oben als Reiter)
+const kommende = () => PLAENE().filter(p => p.week >= ab());
+// Vor dem Planen einer neuen Woche: sind schon MAX_WOCHEN kommende Wochen geplant, wird nach Rückfrage
+// die am weitesten entfernte gelöscht (feste Termine bleiben erhalten). false = abgebrochen.
+function platzFuer(mon) {
+  const andere = kommende().filter(p => p.week !== mon);
+  if (mon < ab() || andere.length < MAX_WOCHEN) return true;
+  const weg = andere.slice().sort((a, b) => Math.abs(parseISO(b.week) - parseISO(mon)) - Math.abs(parseISO(a.week) - parseISO(mon))).slice(0, andere.length - MAX_WOCHEN + 1);
+  if (!confirm(`Es werden höchstens ${MAX_WOCHEN} Wochen geplant. Dafür wird ${weg.map(p => "KW " + kw(p.week)).join(", ")} gelöscht (feste Termine bleiben erhalten). Weiter?`)) return false;
+  DATA.plaene = PLAENE().filter(p => !weg.includes(p)); return true;
 }
 // Woche in die Liste aufnehmen (ersetzt dieselbe Woche) und auf Wunsch anzeigen
 function planSetzen(plan, zeigen = true) {
@@ -329,7 +347,7 @@ function reihenfolgeVerbessern(di) {
 }
 // Reiter mit allen geplanten Wochen (vergangene Wochen mit offenen Besuchen bekommen einen Hinweis)
 function wochenReiter() {
-  const L = PLAENE(); if (L.length < 2) return "";
+  const L = kommende(); if (L.length < 2) return "";
   return `<nav class="wtabs" aria-label="Geplante Wochen">${L.map(p => { const n = offeneBesuche(p).length;
     return `<button data-a="wzeigen" data-week="${p.week}" aria-current="${p === PLAN() ? "page" : "false"}">KW ${kw(p.week)}<small>ab ${fmtD(p.week).slice(0, 6)}${n ? ` · <span class="warn">${n} offen</span>` : ""}</small></button>`; }).join("")}</nav>`;
 }
@@ -338,14 +356,14 @@ function renderPlan() {
   const ws = PL ? PL.week : iso(P.weekStart());
   if (!P.startBekannt()) return `<section class="empty"><h2>Startadresse fehlt</h2><p>Bitte unter <b>Einstellungen › Tagesablauf</b> Ihre Startadresse (zu Hause) mit PLZ eintragen.</p></section>`;
   if (!PL) return `<section class="empty"><h2>Noch keine Woche geplant</h2><p>Der Planer sucht fällige Kunden heraus, bündelt sie zu Tagestouren und plant eine Übernachtungstour für Gebiete über ${S().overnightKm} km. Freitag bleibt Home-Office.</p>
-    <div class="row"><label>Woche ab <input type="date" id="wk" value="${ws}"></label>${ovAuswahl("")}<button class="pri" data-a="plan">Woche planen</button><button data-a="plan4">4 Wochen planen</button></div></section>`;
+    <div class="row"><label>Woche ab <input type="date" id="wk" value="${ws}"></label>${ovAuswahl("")}<button class="pri" data-a="plan">Woche planen</button></div></section>`;
   const alt = P.alternativen(PL);
   const legs = PL.days.filter(D => D.type !== "home").flatMap(D => P.simDay(D).legs);
   const nGesch = legs.filter(L => L.geschaetzt).length;
   const fzText = !legs.length ? "" : nGesch === 0 ? `Echte Fahrzeiten (OpenRouteService${+S().zuschlag ? ", +" + S().zuschlag + " % Zuschlag" : ""})`
     : nGesch === legs.length ? "Entfernungen und Fahrzeiten sind noch Schätzungen" : "Fahrzeiten teilweise geschätzt (≈)";
   let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}</p></div>
-   <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung)}<button class="pri" data-a="plan">Neu planen</button><button data-a="plan4">4 Wochen planen</button></div></div>
+   <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung)}<button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button class="ghost" data-a="wloeschen">Woche löschen</button></div></div>
    ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze Norddeutschland"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
   PL.days.forEach((D, di) => {
     const date = fmtD(D.date);
@@ -737,6 +755,7 @@ function wocheAnsehen(d) {
 }
 function wocheMitNachtPlanen(d, nacht) {
   const mon = montag(d);
+  if (!platzFuer(mon)) return;
   aufbereiten(); planSetzen(P.planWeek(mon, [], TERMINE(), nacht, belegtFuer(mon)));
   TAB = "plan"; geaendert(); toast("Woche ab " + fmtD(mon) + " geplant");
   zumTag(d);
@@ -859,23 +878,18 @@ function doPlan() {
   const nacht = nachtGewaehlt(); if (!nacht) return;
   const mon = montag($("#wk").value || iso(P.weekStart()));
   const alt = planVon(mon); // dieselbe Woche neu planen: "nur diese Woche entfernt" bleibt
+  if (!alt && !platzFuer(mon)) return;
   aufbereiten();
   // Termine aller Wochen; die Planung nimmt die dieser Woche. Kunden aus den anderen geplanten Wochen kommen nicht doppelt dran.
   planSetzen(P.planWeek(mon, alt ? alt.excluded : [], TERMINE(), nacht, belegtFuer(mon)));
   geaendert();
 }
-// 4 Wochen ab der gewählten Woche nacheinander planen (vorhandene Pläne dieser Wochen werden ersetzt)
-function vierWochenPlanen() {
-  const nacht = nachtGewaehlt(); if (!nacht) return;
-  const mon = montag($("#wk").value || iso(P.weekStart()));
-  const wochen = [0, 1, 2, 3].map(i => iso(addDays(parseISO(mon), 7 * i)));
-  const vorhanden = wochen.filter(planVon);
-  if (vorhanden.length && !confirm(`Die Wochen ab ${fmtD(mon)} werden neu geplant (${vorhanden.map(w => "KW " + kw(w)).join(", ")} ${vorhanden.length === 1 ? "ist" : "sind"} schon geplant). Feste Termine bleiben erhalten. Weiter?`)) return;
-  DATA.plaene = PLAENE().filter(p => !wochen.includes(p.week));
-  aufbereiten();
-  const neu = P.planeWochen(mon, 4, TERMINE(), belegtFuer(mon).filter(Boolean), nacht);
-  neu.forEach((p, i) => planSetzen(p, i === 0));
-  geaendert(); toast("4 Wochen geplant (Übernachtung " + P.UEBERNACHTUNG.find(u => u[0] === nacht)[1] + "), KW " + wochen.map(kw).join(", ") + " – je Woche änderbar");
+// Geplante Woche löschen (z. B. Urlaub) – feste Termine bleiben erhalten und kommen in die Woche, sobald sie wieder geplant wird
+function wocheLoeschen() {
+  const PL = PLAN(); if (!PL) return;
+  if (!confirm(`KW ${kw(PL.week)} (Woche ab ${fmtD(PL.week)}) löschen? Feste Termine bleiben erhalten.`)) return;
+  DATA.plaene = PLAENE().filter(p => p !== PL); DATA.plan = null; PLAENE();
+  geaendert(); toast("KW " + kw(PL.week) + " gelöscht");
 }
 // Knopf in einem Dialog wurde gedrückt (direkt ausgeführt, nicht erst beim "close"-Ereignis – das kommt nicht in jedem Browser zuverlässig)
 function dlgAktion(v, btn) {
@@ -955,7 +969,8 @@ document.addEventListener("click", async e => {
   const a = b.dataset.a; if (!a) return;
   try {
     if (a === "plan") doPlan();
-    if (a === "plan4") vierWochenPlanen();
+    if (a === "plannext") wocheAnsehen(iso(addDays(parseISO(PLAN().week), 7)));
+    if (a === "wloeschen") wocheLoeschen();
     if (a === "feinschliff") reihenfolgeVerbessern(+b.dataset.d);
     if (a === "sichern") { const n = await sicherungAnlegen(uhrzeitJetzt()); render(); toast("Gesichert: " + n); }
     if (a === "tagab") tagAbschliessenDialog(b.dataset.week, +b.dataset.d);
