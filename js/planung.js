@@ -117,6 +117,7 @@ export function simulate(start, startMin, ids, day, end) {
       else if (fx - t > 45) warn = "Puffer " + Math.round(fx - t) + " Min. bis zum Fixtermin";
     }
     else if (hs === "closed") { ok = false; warn = "An diesem Tag geschlossen"; begin = t; }
+    else if (!legs.length && start === HOME && +S.ersterMaxKm > 0 && f.km > +S.ersterMaxKm) { ok = false; begin = t; warn = "Erster Besuch " + Math.round(f.km) + " km von zu Hause (höchstens " + S.ersterMaxKm + " km)"; }
     else if (hs === "appt") { begin = t; warn = "Nur nach Vereinbarung – vorher anrufen"; }
     else {
       for (const [a, b] of hs) { const s = Math.max(t, a); if (b - s >= Math.min(dur, 45)) { begin = s; break; } }
@@ -191,10 +192,14 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung) {
     for (const c of cands) { if (used.has(c.id)) continue; if (days[o2].stops.length >= S.maxVisits) break; if (!openOn(c, o2)) continue; const r = insertBest(days[o2], c.id); if (r) { days[o2].stops = r; used.add(c.id); } }
   }
   const far = pool().filter(c => c.dHome > S.overnightKm && openOn(c, o1) && el(c));
-  let seed = null, bestSum = -1;
-  for (const c of far.filter(el)) { const s = far.filter(x => km(c, x) <= 50).reduce((a, x) => a + x.urg, 0); if (s > bestSum) { bestSum = s; seed = c; } }
-  if (seed && !days[o1].stops.length && !days[o2].stops.length) {
-    const region = pool().filter(c => km(seed, c) <= 75 && c.dHome > S.overnightKm * 0.7 && (openOn(c, o1) || openOn(c, o2)) && el(c))
+  // Gegenden nach Wichtigkeit (Summe der Kunden im Umkreis von 50 km); passt die beste nicht (z. B. kein erster Besuch
+  // nah genug an zu Hause), wird die nächste versucht
+  const gegenden = far.map(c => ({ c, sum: far.filter(x => km(c, x) <= 50).reduce((a, x) => a + x.urg, 0) })).sort((a, b) => b.sum - a.sum);
+  for (const { c: seed } of gegenden.slice(0, 10)) {
+    if (days[o1].stops.length || days[o2].stops.length) break;
+    // mit der Regel „erster Besuch höchstens … km“ auch Kunden ab 65 km (auf dem Weg), damit Tag 1 nah genug beginnen kann
+    const ab = +S.ersterMaxKm > 0 ? S.overnightKm * 0.5 : S.overnightKm * 0.7;
+    const region = pool().filter(c => km(seed, c) <= 75 && c.dHome > ab && (openOn(c, o1) || openOn(c, o2)) && el(c))
       .sort((a, b) => b.urg / (1 + km(seed, b) / 30) - a.urg / (1 + km(seed, a) / 30));
     const chosen = [];
     const split = (ids) => {
@@ -226,10 +231,16 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung) {
       continue;
     }
     const seeds = cands.filter(due).sort((a, b) => b.urg - a.urg); if (!seeds.length) continue;
-    const sd = seeds[0]; let ids = [sd.id];
-    const near = cands.filter(c => c.id !== sd.id && km(sd, c) <= 45 && el(c)).sort((a, b) => b.urg / (1 + km(sd, b) / 20) - a.urg / (1 + km(sd, a) / 20));
-    for (const c of near) { if (ids.length >= S.maxVisits) break; const t = order(HOME, ids.concat(c.id), HOME, { sMin: tmin(S.depart), day: D.day }); const s = simulate(HOME, tmin(S.depart), t, D.day, HOME); if (s.ok && s.end <= tmin(S.latest)) ids = t; }
-    D.stops = ids; D.stops.forEach(id => used.add(id));
+    // wichtigster Kunde als Mittelpunkt des Tages; geht der Tag dort nicht (z. B. erster Besuch zu weit von zu Hause),
+    // wird die Gegend des nächstwichtigen Kunden versucht
+    for (const sd of seeds.slice(0, 15)) {
+      let ids = [sd.id];
+      const near = cands.filter(c => c.id !== sd.id && km(sd, c) <= 45 && el(c)).sort((a, b) => b.urg / (1 + km(sd, b) / 20) - a.urg / (1 + km(sd, a) / 20));
+      for (const c of near) { if (ids.length >= S.maxVisits) break; const t = order(HOME, ids.concat(c.id), HOME, { sMin: tmin(S.depart), day: D.day }); const s = simulate(HOME, tmin(S.depart), t, D.day, HOME); if (s.ok && s.end <= tmin(S.latest)) ids = t; }
+      const s = simulate(HOME, tmin(S.depart), ids, D.day, HOME);
+      if (!s.ok || s.end > tmin(S.latest)) continue;
+      D.stops = ids; D.stops.forEach(id => used.add(id)); break;
+    }
   }
   /* Auffüllen: Kunden in der Nähe oder mit kleinem Umweg auf der Strecke (auch auf dem Heimweg) */
   const frei = c => !c.out && c.lat != null && !used.has(c.id) && !ex.has(c.id) && !c.planHold && !gesperrt(c.id);
@@ -242,7 +253,8 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung) {
 // + ein Viertel der Fahrzeit (bei gleicher Dauer gewinnt weniger Fahren).
 // Eingehalten wird: Öffnungszeiten, feste Termine nicht später als bisher, Rückkehrzeit (bzw. letzter Besuch Tag 1 bis 18 Uhr),
 // bei Übernachtung Tag 1 bleibt der letzte Besuch (Hotelort) der letzte.
-export function feinschliff(D) {
+// maxSchritte: Notbremse für die Suche (die Tausch-Prüfung nimmt weniger, weil sie viele Varianten durchprobiert)
+export function feinschliff(D, maxSchritte = 400000) {
   if (!D || D.type === "home" || D.stops.length < 3) return false;
   const n = D.stops.length;
   const e = dayEnds(D), jetzt = simulate(e.start, e.sMin, D.stops, D.day, e.end);
@@ -261,7 +273,7 @@ export function feinschliff(D) {
   const rec = (pos, fahr, besuche) => {
     // untere Grenze: bisherige Fahrzeit + Besuchsdauer (+ ein Viertel der Fahrzeit) – schon zu hoch? (bzw. Notbremse)
     // (solange nur Reihenfolgen über der Grenze bekannt sind, wird nicht abgeschnitten)
-    if (1.25 * fahr + besuche >= (bestWert >= 1e5 ? Infinity : bestWert) || ++schritte > 400000) return;
+    if (1.25 * fahr + besuche >= (bestWert >= 1e5 ? Infinity : bestWert) || ++schritte > maxSchritte) return;
     if (seq.length === frei.length) {
       const voll = letzter ? seq.concat(letzter) : seq.slice();
       const s = simulate(e.start, e.sMin, voll, D.day, e.end); const wert = wertVon(s);
@@ -346,7 +358,7 @@ export function tauschPruefung(plan, nurTag) {
         // die ganze Reihenfolge neu sortieren (Feinschliff; Hotelort bleibt der letzte Besuch)
         if ((!s || s.km - vorherKm > TAUSCH_KM) && st.some(x => km(x, c) <= 25)) {
           const F = { ...D, stops: hotelId ? T.stops.slice(0, -1).concat(c.id, hotelId) : T.stops.concat(c.id) };
-          feinschliff(F); r = F.stops; s = feasible(D, r);
+          feinschliff(F, 30000); r = F.stops; s = feasible(D, r);
         }
         if (s && s.km - vorherKm <= TAUSCH_KM) { neu = r; raus.add(w.id); break suche; }
       }

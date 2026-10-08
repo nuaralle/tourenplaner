@@ -362,7 +362,7 @@ function renderPlan() {
   const nGesch = legs.filter(L => L.geschaetzt).length;
   const fzText = !legs.length ? "" : nGesch === 0 ? `Echte Fahrzeiten (OpenRouteService${+S().zuschlag ? ", +" + S().zuschlag + " % Zuschlag" : ""})`
     : nGesch === legs.length ? "Entfernungen und Fahrzeiten sind noch Schätzungen" : "Fahrzeiten teilweise geschätzt (≈)";
-  let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}</p></div>
+  let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}${+S().ersterMaxKm > 0 ? " · erster Besuch höchstens " + S().ersterMaxKm + " km" : ""}</p></div>
    <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung)}<button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button class="ghost" data-a="wloeschen">Woche löschen</button></div></div>
    ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze Norddeutschland"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
   PL.days.forEach((D, di) => {
@@ -528,7 +528,7 @@ function renderSettings() {
    ${P.startBekannt() ? "" : `<p class="warn">Bitte Startadresse mit PLZ eintragen – ohne sie kann nicht geplant werden.</p>`}
    ${f("depart", "Abfahrt", "time")}${f("latest", "Späteste Rückkehr Tagestour", "time")}${f("latestOv", "Späteste Rückkehr Übernachtungstour (Tag 2)", "time")}
    ${f("lastVisitDay1", "Letzter Besuchsbeginn vor Hotelnacht", "time")}${f("hotelStart", "Abfahrt vom Hotel", "time")}
-   ${f("maxVisits", "Höchstens Besuche pro Tag")}${f("visitMin", "Dauer pro Besuch (Min.)")}<p class="muted">Eigene Dauer je Kunde: Kunden › Kunde öffnen › Bearbeiten.</p></fieldset>
+   ${f("ersterMaxKm", "Erster Besuch höchstens … km von zu Hause (0 = aus)", "number", 'min="0" step="5"')}${f("maxVisits", "Höchstens Besuche pro Tag")}${f("visitMin", "Dauer pro Besuch (Min.)")}<p class="muted">Eigene Dauer je Kunde: Kunden › Kunde öffnen › Bearbeiten.</p></fieldset>
   <fieldset><legend>Echte Fahrzeiten (OpenRouteService)</legend>
    <label>Persönlicher Schlüssel (kostenlos von openrouteservice.org)<input type="password" data-s="orsKey" value="${esc(s.orsKey || "")}" autocomplete="off" spellcheck="false"></label>
    ${f("zuschlag", "Zuschlag auf die Fahrzeit für Verkehr (%)")}
