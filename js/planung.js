@@ -71,7 +71,7 @@ export function rebuild(kunden) {
     c.uPlan = (c.ums && c.ums[S.umsatzJahr]) || 0; // Umsatz des gewählten Jahres
     // Wichtigkeit für die Planung: umsatzstärkste zuerst – oder am längsten nicht besuchte zuerst
     // (noch nie besucht ganz vorn; bei gleichem Abstand entscheidet der Umsatz)
-    c.urg = LAENGST() ? (c.since == null ? 1e5 : c.since) + c.uPlan / 1e9 : c.uPlan;
+    c.urg = LAENGST() ? (c.since == null || !LV_NUTZEN() ? 1e5 : c.since) + c.uPlan / 1e9 : c.uPlan;
     umsatzTrend(c);
     // wahlweise: Kunden mit deutlich rückläufigem Umsatz (ab -20 %) bevorzugt einplanen (bis zu 50 % mehr Gewicht)
     if (!LAENGST() && S.trendBevorzugen && c.trend != null && isFinite(c.trend) && c.trend <= -0.2) c.urg = c.uPlan * (1 + Math.min(0.5, -c.trend));
@@ -83,6 +83,9 @@ export function rebuild(kunden) {
 }
 // Planungsgrundlage: "umsatz" = umsatzstärkste zuerst, "laengst" = am längsten nicht besuchte Kunden zuerst (auch ohne Umsatz)
 export const LAENGST = () => S.grundlage === "laengst";
+// Häkchen in den Einstellungen: ohne Häkchen plant die App so, als wäre kein Kunde besucht worden
+// (kein Mindestabstand, "am längsten nicht besucht" sortiert dann nur nach Umsatz); das Datum selbst bleibt erhalten
+export const LV_NUTZEN = () => S.lvNutzen !== false;
 // Planungsgrundlage „nur Kunden mit Häkchen“ (z. B. "merkmal:Deko Kunde"): Name der Häkchen-Spalte oder null
 export const MERKMAL = () => String(S.grundlage || "").startsWith("merkmal:") ? S.grundlage.slice(8) : null;
 const istJa = v => v === true || /^(ja|x|1|wahr|true)$/i.test(String(v ?? "").trim());
@@ -90,7 +93,7 @@ export const hatMerkmal = (c, name = MERKMAL()) => !!name && istJa((c.extra || {
 // Mindestabstand: gapOk = letzter Besuch liegt am Stichtag (Montag der geplanten Woche) mindestens "abstandWochen" zurück
 export function setzeStichtag(datumISO) {
   const grenze = iso(addDays(parseISO(datumISO), -7 * (+S.abstandWochen || 0)));
-  for (const c of CUST) c.gapOk = !c.lv || c.lv <= grenze;
+  for (const c of CUST) c.gapOk = !LV_NUTZEN() || !c.lv || c.lv <= grenze;
 }
 export const byId = id => byIdMap.get(id);
 // Kommt für die Planung in Frage: Mindestabstand eingehalten und – je nach Grundlage – Umsatz im gewählten Jahr bzw. Häkchen gesetzt

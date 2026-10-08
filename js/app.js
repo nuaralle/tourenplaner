@@ -344,7 +344,7 @@ function renderPlan() {
   const nGesch = legs.filter(L => L.geschaetzt).length;
   const fzText = !legs.length ? "" : nGesch === 0 ? `Echte Fahrzeiten (OpenRouteService${+S().zuschlag ? ", +" + S().zuschlag + " % Zuschlag" : ""})`
     : nGesch === legs.length ? "Entfernungen und Fahrzeiten sind noch Schätzungen" : "Fahrzeiten teilweise geschätzt (≈)";
-  let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}</p></div>
+  let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}</p></div>
    <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung)}<button class="pri" data-a="plan">Neu planen</button><button data-a="plan4">4 Wochen planen</button></div></div>
    ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze Norddeutschland"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
   PL.days.forEach((D, di) => {
@@ -497,8 +497,9 @@ function renderSettings() {
    ${P.trendInfo() ? `<label>Umsätze ${P.trendInfo().jahr} gelten bis (Stand der Liste, leer = heute)<input type="date" data-s="umsatzStand" value="${esc(s.umsatzStand || "")}"></label>
    <p class="muted">Damit wird ${P.trendInfo().jahr} für den Vergleich mit ${P.trendInfo().vorjahr} aufs ganze Jahr hochgerechnet. „Kundenliste abgleichen“ trägt das Datum aus dem Dateinamen selbst ein.</p>
    <label class="chk"><input type="checkbox" data-s="trendBevorzugen" ${s.trendBevorzugen ? "checked" : ""}> Kunden mit rückläufigem Umsatz (ab −20 %) bevorzugt einplanen</label>` : ""}
-   ${f("abstandWochen", "Mindestabstand zwischen zwei Besuchen (Wochen)")}
-   <p class="muted">${P.MERKMAL() ? `Es werden nur Kunden mit Häkchen bei „${esc(P.MERKMAL())}“ eingeplant (${DATA.kunden.filter(k => !k.inactive && P.hatMerkmal(k)).length} Kunden), die umsatzstärksten zuerst. Fehlt in der Nähe ein Alternativ-Kunde mit Häkchen, wird ein anderer Kunde vorgeschlagen.` : P.LAENGST() ? "Kunden, deren letzter Besuch am längsten zurückliegt, werden zuerst eingeplant (noch nie besuchte ganz vorn), auch Kunden ohne Umsatz." : "Die umsatzstärksten Kunden werden zuerst eingeplant, nur Kunden mit Umsatz im gewählten Jahr."} Wer innerhalb des Mindestabstands besucht wurde, wird übersprungen.</p></fieldset>
+   <label class="chk"><input type="checkbox" data-s="lvNutzen" ${P.LV_NUTZEN() ? "checked" : ""}> „Letzter Besuch“ bei der Planung berücksichtigen</label>
+   ${P.LV_NUTZEN() ? f("abstandWochen", "Mindestabstand zwischen zwei Besuchen (Wochen)") : `<p class="warn">Ohne Häkchen plant die App so, als wäre noch kein Kunde besucht worden: kein Mindestabstand${P.LAENGST() ? ", und „am längsten nicht besucht“ sortiert nur nach Umsatz" : ""}. Die Daten in der Spalte bleiben erhalten. Danach „Neu planen“.</p>`}
+   <p class="muted">${P.MERKMAL() ? `Es werden nur Kunden mit Häkchen bei „${esc(P.MERKMAL())}“ eingeplant (${DATA.kunden.filter(k => !k.inactive && P.hatMerkmal(k)).length} Kunden), die umsatzstärksten zuerst. Fehlt in der Nähe ein Alternativ-Kunde mit Häkchen, wird ein anderer Kunde vorgeschlagen.` : P.LAENGST() ? "Kunden, deren letzter Besuch am längsten zurückliegt, werden zuerst eingeplant (noch nie besuchte ganz vorn), auch Kunden ohne Umsatz." : "Die umsatzstärksten Kunden werden zuerst eingeplant, nur Kunden mit Umsatz im gewählten Jahr."}${P.LV_NUTZEN() ? " Wer innerhalb des Mindestabstands besucht wurde, wird übersprungen." : ""}</p></fieldset>
   <fieldset><legend>Woche und Übernachtung</legend>
    ${f("overnightKm", "Übernachtung ab Fahrstrecke (km)")}
    ${f("hotelMax", "Hotelbudget pro Nacht inkl. Frühstück (€)")}
@@ -1001,7 +1002,7 @@ document.addEventListener("change", async e => {
     const k = t.dataset.s;
     DATA.einst[k] = t.type === "checkbox" ? t.checked : t.dataset.zahl ? +t.value : (t.type === "number" ? (t.value === "" ? DEFAULTS[k] : +t.value) : t.value.trim());
     if (k === "start") DATA.einst.startKoord = ""; // neue Adresse: Lage aus der PLZ bestimmen
-    persist(); aufbereiten(); if (["grundlage", "orsKey", "start", "umsatzJahr", "umsatzStand", "trendBevorzugen"].includes(k)) render(); toast("Einstellung gespeichert");
+    persist(); aufbereiten(); if (["grundlage", "orsKey", "start", "umsatzJahr", "umsatzStand", "trendBevorzugen", "lvNutzen"].includes(k)) render(); toast("Einstellung gespeichert");
     if (k === "start" && DATA.einst.orsKey) fzBerechnen(false);
     if (k === "orsKey" && DATA.einst.orsKey) fzBerechnen(true);
     if (k === "calSync" && DATA.einst.calSync) planeAbgleich();
