@@ -313,28 +313,42 @@ function auffuellen(D, frei, genommen) {
 // (bzw. Wichtigkeit) als ein eingeplanter, wird getauscht – wenn der Tag dadurch höchstens 40 km länger wird und alle Regeln
 // eingehalten bleiben (Öffnungszeiten, feste Termine, Rückkehrzeit, Mindestabstand). Feste Termine werden nie getauscht,
 // an Tag 1 einer Übernachtung bleibt der letzte Besuch (Hotelort). Bei „am längsten nicht besucht“ wird nicht getauscht.
-export const TAUSCH_MEHR = 1.2, TAUSCH_KM = 40; // 40 km: Wunsch 2026-10-08, damit auch Kunden am Rand des Gebiets reinkommen
+// Vorrang für weite Kunden (2026-10-08): An Übernachtungstagen darf ein Kunde, der nur mit Übernachtung erreichbar ist
+// (über "overnightKm", Standard 130 km), einen Kunden ersetzen, den man auch mit einer Tagestour erreicht – schon wenn er
+// mindestens halb so viel Umsatz hat (FERN_ANTEIL).
+export const TAUSCH_MEHR = 1.2, TAUSCH_KM = 40, FERN_ANTEIL = 0.5; // 40 km: Wunsch 2026-10-08, damit auch Kunden am Rand des Gebiets reinkommen
 export function tauschPruefung(plan, nurTag) {
   if (LAENGST()) return 0;
   let n = 0;
   for (const D of plan.days) {
     if (D.type === "home" || (nurTag && D !== nurTag)) continue;
     const fern = D.type === "tour" ? (() => true) : (c => c.dHome > S.overnightKm * 0.5); // wie beim Auffüllen
+    const raus = new Set(); // an diesem Tag schon herausgetauscht – kommt nicht wieder herein
     for (let runde = 0; runde < S.maxVisits && D.stops.length >= S.maxVisits; runde++) {
       const st = D.stops.map(byId).filter(Boolean);
       const hotelId = D.type === "ov1" ? D.stops[D.stops.length - 1] : null;
       const weg = st.filter(c => !(FIX[c.id] && FIX[c.id].day === D.day) && c.id !== hotelId).sort((a, b) => a.urg - b.urg);
       if (!weg.length) break;
       const vorherKm = simDay(D).km;
-      const kand = ersatzKandidaten(plan, D).filter(c => fern(c) && c.urg >= weg[0].urg * TAUSCH_MEHR && st.some(x => km(x, c) <= 50))
+      const weit = c => c.dHome > S.overnightKm;
+      // an Übernachtungstagen verdrängt ein Kunde aus Tagestour-Reichweite nie einen weiten Kunden (sonst Hin-und-her-Tausch)
+      const darf = (c, w) => D.type === "tour" ? c.urg >= w.urg * TAUSCH_MEHR
+        : !(weit(w) && !weit(c)) && (c.urg >= w.urg * TAUSCH_MEHR || (weit(c) && !weit(w) && c.urg >= w.urg * FERN_ANTEIL));
+      const kand = ersatzKandidaten(plan, D).filter(c => fern(c) && !raus.has(c.id) && weg.some(w => darf(c, w)) && st.some(x => km(x, c) <= 50))
         .sort((a, b) => b.urg - a.urg).slice(0, 40);
       let neu = null;
       suche: for (const c of kand) for (const w of weg) {
-        if (c.urg < w.urg * TAUSCH_MEHR) break; // weg ist aufsteigend sortiert
+        if (!darf(c, w)) continue;
         const T = { ...D, stops: D.stops.filter(id => id !== w.id) };
-        const r = hotelId ? insertBest(T, c.id, false, T.stops.length - 1) : tryInsert(T, c.id);
-        const s = r && feasible(D, r);
-        if (s && s.km - vorherKm <= TAUSCH_KM) { neu = r; break suche; }
+        let r = hotelId ? insertBest(T, c.id, false, T.stops.length - 1) : tryInsert(T, c.id);
+        let s = r && feasible(D, r);
+        // Passt das Einschieben nicht (z. B. Mittagspause eines anderen Kunden), bei Kunden in der Nähe der Route
+        // die ganze Reihenfolge neu sortieren (Feinschliff; Hotelort bleibt der letzte Besuch)
+        if ((!s || s.km - vorherKm > TAUSCH_KM) && st.some(x => km(x, c) <= 25)) {
+          const F = { ...D, stops: hotelId ? T.stops.slice(0, -1).concat(c.id, hotelId) : T.stops.concat(c.id) };
+          feinschliff(F); r = F.stops; s = feasible(D, r);
+        }
+        if (s && s.km - vorherKm <= TAUSCH_KM) { neu = r; raus.add(w.id); break suche; }
       }
       if (!neu) break;
       D.stops = neu; n++;
