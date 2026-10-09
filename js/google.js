@@ -93,18 +93,28 @@ async function anlegen(name, inhalt, typ, ordner) {
   return r.json();
 }
 
-/* ---------- Sicherungen (Unterordner „Sicherungen“ im Ordner „Tourenplaner“) ---------- */
-export const SICHERUNG_ORDNER = "Sicherungen";
-async function sicherungsOrdner(neuSuchen) {
-  const g = lesen(); if (g.sicherungen && !neuSuchen) return g.sicherungen;
+/* ---------- Unterordner im Ordner „Tourenplaner“ („Sicherungen“, „Bestellungen“) ---------- */
+export const SICHERUNG_ORDNER = "Sicherungen", BESTELL_ORDNER = "Bestellungen";
+const ORDNER_KEY = { [SICHERUNG_ORDNER]: "sicherungen", [BESTELL_ORDNER]: "bestellungen" };
+async function unterordner(name, neuSuchen) {
+  const key = ORDNER_KEY[name];
+  const g = lesen(); if (g[key] && !neuSuchen) return g[key];
   const o = await ordnerId();
-  const f = await suchen(`name='${SICHERUNG_ORDNER}' and mimeType='application/vnd.google-apps.folder' and '${o}' in parents`);
+  const f = await suchen(`name='${name}' and mimeType='application/vnd.google-apps.folder' and '${o}' in parents`);
   let id = f[0]?.id;
   if (!id) {
-    const r = await api(DRIVE + "?fields=id", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: SICHERUNG_ORDNER, mimeType: "application/vnd.google-apps.folder", parents: [o] }) });
+    const r = await api(DRIVE + "?fields=id", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [o] }) });
     id = (await r.json()).id;
   }
-  const g2 = lesen(); g2.sicherungen = id; schreiben(g2); return id;
+  const g2 = lesen(); g2[key] = id; schreiben(g2); return id;
+}
+const sicherungsOrdner = neu => unterordner(SICHERUNG_ORDNER, neu);
+// Ausgefülltes Bestellformular in „Tourenplaner › Bestellungen“ ablegen
+export async function bestellungSpeichern(name, inhalt) {
+  for (const neu of [false, true]) {
+    try { return await anlegen(name, inhalt, "application/pdf", await unterordner(BESTELL_ORDNER, neu)); }
+    catch (e) { if (neu || e.code === "anmelden") throw e; }
+  }
 }
 // Sicherungskopie ablegen; eine vorhandene Datei mit gleichem Namen bleibt unangetastet (Rückgabe dann null)
 export async function sicherungSpeichern(name, inhalt, typ) {

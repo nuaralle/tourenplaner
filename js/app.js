@@ -6,6 +6,7 @@ import { leseStand, schreibeStand, kundenNormalisieren, umsatzJahre, umsatzJahr,
 import * as Sp from "./speicher.js";
 import * as G from "./google.js";
 import * as F from "./fahrzeiten.js";
+import * as B from "./bestellung.js";
 
 const $ = s => document.querySelector(s);
 const XLSX = window.XLSX;
@@ -543,6 +544,10 @@ function renderSettings() {
     : `<p class="muted">Nicht verbunden. Änderungen bleiben auf diesem Gerät, bis Sie sich verbinden.</p><button class="pri" data-a="gverbinden">Mit Google verbinden</button>`}
    <label class="chk"><input type="checkbox" data-s="calSync" ${s.calSync ? "checked" : ""}> Feste Termine automatisch in den Google Kalender eintragen</label>
    <p class="muted">Ohne Einladungen. „Fix lösen“, „Entfernen“ oder „Alternative nehmen“ löscht den Eintrag wieder.</p></fieldset>
+  <fieldset><legend>Bestellformulare</legend>
+   <p class="muted">Vorlagen auf diesem Gerät: ${B.ARTEN.map(a => esc(B.FORMULARE[a].titel) + (VORLAGEN[a] ? " ✓" : " – fehlt")).join(", ")}.</p>
+   <label>Vorlagen auswählen (die PDF-Formulare, auch alle drei auf einmal)<input type="file" id="vorlagenfile" accept="application/pdf,.pdf" multiple></label>
+   <p class="muted">Die App erkennt selbst, welches Formular es ist. Die Vorlagen bleiben auf diesem Gerät${G.konfiguriert() ? " und werden in Google Drive › " + G.ORDNER + " gespeichert, damit das andere Gerät sie auch hat" : ""}. ${ORDNER ? " Am Rechner werden PDFs im Ordner „Vorlagen“ (im Tourenplaner-Ordner) automatisch übernommen." : ""} Ausfüllen: Kunde öffnen › „Bestellformular“.</p></fieldset>
   <fieldset><legend>Eigene Spalten der Kundenliste</legend>
    <p class="muted">${eigene().length ? "Vorhanden: " + eigene().map(s => esc(s) + (istHaekchen(s) ? " (Häkchen)" : " (Text)")).join(", ") + "." : "Noch keine eigenen Spalten."} Eigene Spalten können Sie beim Kunden unter „Bearbeiten“ ausfüllen.</p>
    <label>Neue Spalte<input id="spname" placeholder="z. B. Objektkunde oder Umsatz 26" autocomplete="off"></label>
@@ -610,7 +615,7 @@ async function exportXlsx(inOrdner) {
 }
 
 /* ---------- Dialoge ---------- */
-function dlg(html) { const d = $("#dlg"); d.innerHTML = `<form method="dialog" class="dlgin">${html}</form>`; d.showModal(); return d; }
+function dlg(html) { const d = $("#dlg"); d.classList.remove("breit"); d.innerHTML = `<form method="dialog" class="dlgin">${html}</form>`; d.showModal(); return d; }
 function openCustomer(id) {
   const c = byId(id); if (!c) return;
   const PL = PLAN();
@@ -628,7 +633,7 @@ function openCustomer(id) {
    <dt>Termin</dt><dd>${tf ? `<b class="termin">${terminText(tf)}</b>${terminHinweis(c, tf.date, tf.time) ? `<br><span class="warn">${esc(terminHinweis(c, tf.date, tf.time))}</span>` : ""}<br>${wocheKnopf(tf.date, "link small")}` : "kein Termin vereinbart"}</dd></dl>
    ${c.planHold ? `<p class="warn">Wird nicht automatisch eingeplant. <button type="button" class="link small" data-a="unhold" data-id="${c.id}">Wieder einplanen</button></p>` : ""}
    <h4>Notizen</h4>${c.notes.length ? `<ul class="notes">${c.notes.slice().reverse().map(n => `<li><time>${fmtD(n.d)}</time>${esc(n.t)}</li>`).join("")}</ul>` : `<p class="muted">Noch keine Notizen.</p>`}
-   <div class="row wrap"><button class="pri" value="visit" data-id="${c.id}">Besuch erfassen</button><button value="edit" data-id="${c.id}">Bearbeiten</button>
+   <div class="row wrap"><button class="pri" value="visit" data-id="${c.id}">Besuch erfassen</button><button value="edit" data-id="${c.id}">Bearbeiten</button><button value="bestwahl" data-id="${c.id}">Bestellformular</button>
    <button value="appt" data-id="${c.id}">${tf ? "Termin ändern" : "Termin vereinbaren"}</button>${tf ? `<button value="delappt" data-id="${c.id}" class="ghost">Termin absagen</button>` : ""}
    ${PL && dayOpts ? `<label class="inl">Zur Tour am <select id="addday">${dayOpts}</select></label><button value="addtour" data-id="${c.id}">hinzufügen</button>` : ""}</div>`);
 }
@@ -902,6 +907,13 @@ function dlgAktion(v, btn) {
       .catch(e => { console.warn(e); toast("Google Drive nicht erreichbar – bitte später erneut versuchen"); }).finally(statusZeigen);
     return;
   }
+  if (v === "bestwahl") { bestellWahl(id); return; }
+  if (v === "bestform") { bestellFormular(id, btn.dataset.art).catch(fehlerZeigen); return; }
+  if (v === "bestleeren") { entwurfWeg(); bestellFormular(id, btn.dataset.art).catch(fehlerZeigen); return; }
+  if (v === "bestpdf") { bestellungErstellen(id, btn.dataset.art).catch(fehlerZeigen); return; }
+  if (v === "bestteilen") { bestellungTeilen(); return; }
+  if (v === "bestladen") { bestellungLaden(); return; }
+  if (v === "bestaendern") { if (BEST) bestellFormular(BEST.id, BEST.art, BEST.w).catch(fehlerZeigen); return; }
   if (v === "visit") { visitDialog(id); return; }
   if (v === "edit") { editDialog(id); return; }
   if (v === "appt") { terminDialog(id); return; }
@@ -950,6 +962,136 @@ function dlgAktion(v, btn) {
   }
   if (v === "deact") { roh(id).inactive = true; geaendert(); toast("Kunde deaktiviert"); }
 }
+/* ---------- Bestellformulare (Meterkonfektion, Flächenvorhang, Faltrollo) ---------- */
+// Die PDF-Vorlagen liegen nur auf dem Gerät (IndexedDB) und in Google Drive – nie im öffentlichen Programm.
+const VORLAGE_DRIVE = art => "Tourenplaner_Vorlage_" + B.FORMULARE[art].titel.replace("ä", "ae") + ".pdf";
+const VORLAGE_KEY = art => "vorlage:" + art, VORLAGEN_DRIVE_KEY = "tourenplaner-vorlagen-drive", ENTWURF_KEY = "tourenplaner-bestellentwurf";
+let VORLAGEN = {};       // art -> true, wenn die Vorlage auf diesem Gerät liegt
+let BEST = null;         // zuletzt erstelltes Formular { id, art, w, pdf, name }
+let SIG = null, VORLAGE_FUER = null; // Unterschriftsfeld; { id, art }, wenn beim Öffnen die Vorlage fehlte
+const fehlerZeigen = e => { console.error(e); toast("Fehler: " + e.message); };
+
+let pdfLibLaeuft = null;
+function pdfLib() { // pdf-lib erst laden, wenn ein Formular gebraucht wird (die Datei ist groß)
+  if (window.PDFLib) return Promise.resolve(window.PDFLib);
+  return pdfLibLaeuft ||= new Promise((ok, fehler) => {
+    const el = document.createElement("script"); el.src = "vendor/pdf-lib.min.js";
+    el.onload = () => ok(window.PDFLib);
+    el.onerror = () => { pdfLibLaeuft = null; el.remove(); fehler(new Error("PDF-Programmteil konnte nicht geladen werden – bitte mit Netz erneut versuchen")); };
+    document.head.appendChild(el);
+  });
+}
+async function vorlagenPruefen() { for (const a of B.ARTEN) VORLAGEN[a] = !!(await Sp.dateiLesen(VORLAGE_KEY(a))); }
+const vorlagenInDrive = () => { try { return JSON.parse(localStorage.getItem(VORLAGEN_DRIVE_KEY) || "[]"); } catch (e) { return []; } };
+async function vorlageNachDrive(art, bytes) {
+  const i = await G.dateiInfo(VORLAGE_DRIVE(art)); await G.dateiSpeichern(VORLAGE_DRIVE(art), bytes, "application/pdf", i && i.id);
+  try { localStorage.setItem(VORLAGEN_DRIVE_KEY, JSON.stringify([...new Set(vorlagenInDrive().concat(art))])); } catch (e) { /* egal */ }
+}
+// Vorlagen, die ohne Google-Verbindung ausgewählt wurden, nachträglich in Google Drive ablegen
+async function vorlagenNachDrive() {
+  if (!driveBereit()) return;
+  for (const a of B.ARTEN) if (VORLAGEN[a] && !vorlagenInDrive().includes(a)) await vorlageNachDrive(a, await Sp.dateiLesen(VORLAGE_KEY(a))).catch(e => console.warn(e));
+}
+// Am Rechner: fehlende Vorlagen aus dem Ordner „Vorlagen“ im Tourenplaner-Ordner übernehmen
+async function vorlagenAusOrdner() {
+  if (!ORDNER || B.ARTEN.every(a => VORLAGEN[a])) return;
+  const namen = await Sp.vorlagenImOrdner(); if (!namen.length) return;
+  const L = await pdfLib();
+  for (const n of namen) {
+    const bytes = await Sp.vorlageAusOrdner(n), art = await B.erkennen(L, bytes);
+    if (!art || VORLAGEN[art]) continue;
+    await Sp.dateiAblegen(VORLAGE_KEY(art), bytes); VORLAGEN[art] = true;
+  }
+}
+// Vorlage vom Gerät, sonst aus Google Drive (z. B. auf dem iPhone, wenn sie am Rechner ausgewählt wurde)
+async function vorlageHolen(art) {
+  if (!VORLAGEN[art]) await vorlagenAusOrdner().catch(e => console.warn(e));
+  const b = await Sp.dateiLesen(VORLAGE_KEY(art)); if (b) return b;
+  if (!driveBereit()) return null;
+  const i = await G.dateiInfo(VORLAGE_DRIVE(art)).catch(() => null); if (!i) return null;
+  const d = await G.dateiLaden(i.id); await Sp.dateiAblegen(VORLAGE_KEY(art), d); VORLAGEN[art] = true; return d;
+}
+// Ausgewählte PDF-Dateien als Vorlagen übernehmen; welches Formular es ist, erkennt die App an den Feldern
+async function vorlagenEinlesen(dateien) {
+  const L = await pdfLib(), gut = [], falsch = [];
+  for (const f of dateien) {
+    const bytes = await f.arrayBuffer(), art = await B.erkennen(L, bytes);
+    if (!art) { falsch.push(f.name); continue; }
+    await Sp.dateiAblegen(VORLAGE_KEY(art), bytes); VORLAGEN[art] = true; gut.push(B.FORMULARE[art].titel);
+    if (driveBereit()) vorlageNachDrive(art, bytes).catch(e => console.warn(e));
+  }
+  toast((gut.length ? "Vorlage übernommen: " + gut.join(", ") : "Keine Vorlage übernommen") + (falsch.length ? ". Nicht erkannt: " + falsch.join(", ") : ""));
+  return gut.length;
+}
+const entwurfLesen = () => { try { return JSON.parse(localStorage.getItem(ENTWURF_KEY) || "null"); } catch (e) { return null; } };
+const entwurfWeg = () => { try { localStorage.removeItem(ENTWURF_KEY); } catch (e) { /* egal */ } };
+
+function bestellWahl(id) {
+  const c = byId(id) || roh(id);
+  dlg(`<header class="dh"><h3>Bestellformular für ${esc(c.n1)}</h3><button value="x" class="ghost">Abbrechen</button></header>
+   <p class="muted">Kundendaten und Datum werden eingetragen. Heraus kommt das ausgefüllte Original-Formular als PDF.</p>
+   <div class="row wrap">${B.ARTEN.map(a => `<button class="pri" value="bestform" data-art="${a}" data-id="${esc(id)}">${B.FORMULARE[a].titel}</button>`).join("")}</div>`);
+}
+async function bestellFormular(id, art, werte) {
+  const c = byId(id) || roh(id), F = B.FORMULARE[art];
+  if (!(await vorlageHolen(art))) {
+    VORLAGE_FUER = { id, art };
+    dlg(`<header class="dh"><h3>Vorlage ${F.titel} fehlt</h3><button value="x" class="ghost">Abbrechen</button></header>
+     <p>Bitte einmal das PDF-Formular „${F.titel}“ auswählen (z. B. aus Google Drive). Danach ist es auf diesem Gerät gespeichert${G.konfiguriert() ? " und wird auch in Google Drive abgelegt" : ""}.</p>
+     <label>PDF-Formular auswählen<input type="file" id="vorlagefile" accept="application/pdf,.pdf" multiple></label>
+     ${G.konfiguriert() && !G.angemeldet() ? `<p class="muted">Tipp: Mit Google verbunden holt die App die Vorlage selbst, wenn sie schon auf einem anderen Gerät ausgewählt wurde.</p>` : ""}`);
+    return;
+  }
+  const e = entwurfLesen(), mitEntwurf = !werte && e && e.id === id && e.art === art;
+  const w = werte || (mitEntwurf ? e.w : B.vorbelegen(c));
+  const d = dlg(`<header class="dh"><h3>${F.titel}: ${esc(c.n1)}</h3><button value="x" class="ghost">Abbrechen</button></header>
+   ${mitEntwurf ? `<p class="hint">Die letzten Eingaben wurden wiederhergestellt. <button class="link small" value="bestleeren" data-id="${esc(id)}" data-art="${art}">Neu beginnen</button></p>` : ""}
+   ${werte ? `<p class="hint">Unterschrift bitte bei Bedarf neu setzen.</p>` : ""}
+   ${B.formularHTML(art, w)}
+   <div class="row"><button class="pri" value="bestpdf" data-id="${esc(id)}" data-art="${art}">PDF erstellen</button></div>`);
+  d.classList.add("breit");
+  const form = d.querySelector("form");
+  SIG = B.unterschriftFeld($("#bsig"), $("#bsigweg"));
+  $("#bposplus").onclick = () => {
+    const n = form.querySelector(".bpos[hidden]"); if (n) { n.hidden = false; n.querySelector("input,select").focus(); }
+    if (!form.querySelector(".bpos[hidden]")) $("#bposplus").hidden = true;
+  };
+  form.oninput = () => { try { localStorage.setItem(ENTWURF_KEY, JSON.stringify({ id, art, w: B.werteLesen(form) })); } catch (err) { /* egal */ } };
+  pdfLib().catch(() => {}); // schon einmal im Hintergrund laden
+}
+async function bestellungErstellen(id, art) {
+  const form = $("#dlg form"), w = B.werteLesen(form), png = SIG && SIG.png();
+  if (B.positionenLeer(w) && !confirm("Es ist noch keine Position ausgefüllt. Trotzdem ein PDF erstellen?")) { await bestellFormular(id, art, w); return; }
+  toast("PDF wird erstellt …");
+  const [L, vorlage] = await Promise.all([pdfLib(), vorlageHolen(art)]);
+  if (!vorlage) throw new Error("Vorlage fehlt");
+  const pdf = await B.ausfuellen(L, vorlage, art, w, png), name = B.dateiname(art, w), titel = B.FORMULARE[art].titel;
+  BEST = { id, art, w, pdf, name };
+  entwurfWeg();
+  const k = roh(id);
+  if (k) { k.notes = (k.notes || []).concat({ d: today(), t: `${w.art === "angebot" ? "Angebot" : "Bestellung"} ${titel} erstellt${w.kommission ? " (Kommission " + w.kommission + ")" : ""}` }); geaendert(); }
+  let drive = "";
+  if (driveBereit()) {
+    try { await G.bestellungSpeichern(name, pdf); drive = `In Google Drive › ${G.ORDNER} › ${G.BESTELL_ORDNER} gespeichert.`; }
+    catch (e) { console.warn(e); drive = "Google Drive war nicht erreichbar – bitte das PDF teilen oder herunterladen."; }
+  } else if (G.konfiguriert()) drive = "Nicht mit Google verbunden – das PDF wurde nicht in Google Drive gespeichert.";
+  dlg(`<header class="dh"><h3>${titel}: PDF fertig</h3><button value="x" class="ghost">Schließen</button></header>
+   <p>${esc(name)}</p>${drive ? `<p class="muted">${esc(drive)}</p>` : ""}
+   <p class="muted">Beim Kunden wurde eine Notiz eingetragen.</p>
+   <div class="row wrap"><button class="pri" value="bestteilen">Teilen / per Mail senden</button><button value="bestladen">Herunterladen</button><button value="bestaendern">Ändern</button></div>`);
+}
+function bestellungLaden() {
+  if (!BEST) return;
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([BEST.pdf], { type: "application/pdf" }));
+  a.download = BEST.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+function bestellungTeilen() {
+  if (!BEST) return;
+  const datei = new File([BEST.pdf], BEST.name, { type: "application/pdf" });
+  if (navigator.canShare && navigator.canShare({ files: [datei] })) navigator.share({ files: [datei], title: BEST.name }).catch(e => { if (e.name !== "AbortError") bestellungLaden(); });
+  else { bestellungLaden(); toast("Teilen geht hier nicht – das PDF wurde heruntergeladen"); }
+}
+
 function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), Math.max(2600, t.length * 55)); }
 
 /* ---------- Start ---------- */
@@ -1009,6 +1151,14 @@ document.addEventListener("change", async e => {
     try { await abgleichStarten(t.files[0]); } catch (err) { console.error(err); toast("Liste konnte nicht gelesen werden: " + err.message); }
     t.value = "";
   }
+  if ((t.id === "vorlagenfile" || t.id === "vorlagefile") && t.files.length) {
+    try {
+      await vorlagenEinlesen([...t.files]);
+      if (t.id === "vorlagefile" && VORLAGE_FUER && VORLAGEN[VORLAGE_FUER.art]) { const v = VORLAGE_FUER; VORLAGE_FUER = null; await bestellFormular(v.id, v.art); }
+      else if (t.id === "vorlagenfile") render();
+    } catch (err) { console.error(err); toast("Vorlage konnte nicht gelesen werden: " + err.message); }
+    t.value = "";
+  }
   if (t.id === "xlsxfile" && t.files[0]) {
     try { standUebernehmen(t.files[0].name, await t.files[0].arrayBuffer()); }
     catch (err) { console.error(err); toast("Datei konnte nicht gelesen werden: " + err.message); }
@@ -1047,6 +1197,7 @@ function stillAnmelden() {
     else if (!rueck && stillAnmelden()) return;
   }
   if (DATA) fzBerechnen(false);
+  vorlagenPruefen().then(vorlagenAusOrdner).then(() => { if (TAB === "set") render(); return vorlagenNachDrive(); }).catch(e => console.warn(e));
   setInterval(() => { if (document.visibilityState === "visible") abgleichen(); }, 5 * 60e3);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { if (!stillAnmelden()) abgleichen(); } });
   addEventListener("online", () => { statusZeigen(); abgleichen(); if (DATA) fzBerechnen(false); });

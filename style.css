@@ -123,3 +123,12 @@ button[disabled]{opacity:.5;cursor:default}
 .tagliste{display:flex;flex-direction:column;gap:.35rem;margin:.6rem 0 1rem}
 .stopnr{font:700 8px var(--body);fill:#fff;text-anchor:middle;dominant-baseline:central;pointer-events:none}
 .stop .t .nr{display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;border-radius:50%;color:#fff;font:700 .72rem var(--body);margin-right:.35rem;vertical-align:1px}
+/* Bestellformulare */
+dialog.breit{width:min(900px,96vw)}
+.bpos,.bgr{background:var(--surf2);border:1px solid var(--line)}.bpos[hidden]{display:none}
+.bgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:.6rem;align-items:end}
+.bgrid .bbreit{grid-column:span 2}
+.bgrid label.chk{min-height:40px}
+.bopt{display:flex;flex-wrap:wrap;gap:.2rem .9rem;align-items:center;font-size:.9rem;color:var(--muted);grid-column:span 2}.bopt span{width:100%}
+.bsig{width:100%;height:auto;aspect-ratio:10/3;background:#fff;border:1px dashed var(--line);border-radius:6px;touch-action:none;cursor:crosshair}
+@media (max-width:640px){.bgrid{grid-template-columns:1fr 1fr}}
