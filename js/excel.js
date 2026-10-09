@@ -6,7 +6,7 @@ import { PLZ } from "./plz.js";
 // Spalte in Excel -> Feld im Programm
 const SPALTEN = [
   ["Kd Nr.", "id"], ["Name1", "n1"], ["Name2", "n2"], ["Name3", "n3"], ["Plz", "plz"], ["Ort", "ort"], ["Straße", "str"],
-  ["Telefon", "tel"], ["Email", "mail"], ["Rabatt", "rab"], ["Preisgruppe", "pg"],
+  ["Telefon", "tel"], ["Mobil", "mob"], ["Telefon 2", "tel2"], ["Email", "mail"], ["Rabatt", "rab"], ["Preisgruppe", "pg"],
   ["Priorität (ABC)", "abc"], ["Ansprechpartner", "ap"], ["Position/Funktion", "pos"], ["Direktkontakt (Tel./Mobil)", "dk"],
   ["Öffnungszeiten", "oh"], ["Besuchsdauer (Min.)", "vm"], ["Besuchsrhythmus (Wochen)", "rh"], ["Letzter Besuch", "lv"],
   ["Aus Planung genommen", "hold"], ["Notizen", "notes"], ["Private Notizen", "pnotes"], ["Neu angelegt", "isNew"], ["Deaktiviert", "inactive"],
@@ -92,7 +92,7 @@ export function leseStand(XLSX, daten) {
     const extra = {}; for (const s of eigene) if (z[s] !== "" && z[s] != null) extra[s] = wert(z[s]);
     const c = {
       id, n1: txt(k.n1), n2: txt(k.n2), n3: txt(k.n3), plz: txt(k.plz).replace(/\D/g, "").padStart(5, "0"), ort: txt(k.ort), str: txt(k.str),
-      tel: txt(k.tel), mail: txt(k.mail), rab: txt(k.rab), pg: txt(k.pg), ums,
+      tel: txt(k.tel), mob: txt(k.mob), tel2: txt(k.tel2), mail: txt(k.mail), rab: txt(k.rab), pg: txt(k.pg), ums,
       abc: (txt(k.abc).toUpperCase().match(/[ABC]/) || ["C"])[0], ap: txt(k.ap), pos: txt(k.pos), dk: txt(k.dk), oh: txt(k.oh),
       vm: zahl(k.vm) || null, rh: zahl(k.rh) || null, lv: datum(k.lv), hold: ja(k.hold), notes: notizenLesen(k.notes), pnotes: notizenLesen(k.pnotes),
       isNew: ja(k.isNew), inactive: ja(k.inactive), extra,
@@ -296,7 +296,7 @@ export function abgleichAnwenden(kunden, liste, vorschlag, auswahl) {
     k.isNew = false; erg.umbenennen.push([v.id, v.neu]);
   }
   for (const z of vorschlag.neu) if (auswahl.neu.has(z.id)) {
-    kunden.push({ id: z.id, n1: z.n1 || "", n2: z.n2 || "", n3: z.n3 || "", plz: z.plz || "", ort: z.ort || "", str: z.str || "", tel: z.tel || "", mail: z.mail || "",
+    kunden.push({ id: z.id, n1: z.n1 || "", n2: z.n2 || "", n3: z.n3 || "", plz: z.plz || "", ort: z.ort || "", str: z.str || "", tel: z.tel || "", mob: "", tel2: "", mail: z.mail || "",
       rab: z.rab || "", pg: z.pg || "", ums: { ...z.ums }, abc: "C", ap: "", pos: "", dk: "", oh: "", vm: null, rh: null, lv: "", hold: false, notes: [], pnotes: [],
       isNew: false, inactive: false, extra: {} });
     erg.neu++;

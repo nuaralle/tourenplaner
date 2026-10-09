@@ -196,7 +196,7 @@ function konfliktDialog(meta) {
 }
 const kalBody = (c, f) => {
   const ende = hhmm(tmin(f.time) + P.dauer(c));
-  const z = [c.tel ? "Telefon: " + c.tel : "", c.ap ? "Ansprechpartner: " + c.ap + (c.pos ? " (" + c.pos + ")" : "") : "", c.dk ? "Direkt: " + c.dk : "", "Kd.-Nr.: " + (vorlaeufig(c.id) ? "noch keine" : c.id)].filter(Boolean);
+  const z = [c.tel ? "Telefon: " + c.tel : "", c.mob ? "Mobil: " + c.mob : "", c.tel2 ? "Telefon 2: " + c.tel2 : "", c.ap ? "Ansprechpartner: " + c.ap + (c.pos ? " (" + c.pos + ")" : "") : "", c.dk ? "Direkt: " + c.dk : "", "Kd.-Nr.: " + (vorlaeufig(c.id) ? "noch keine" : c.id)].filter(Boolean);
   const last = c.notes.slice(-2).map(n => fmtD(n.d) + ": " + n.t); if (last.length) z.push("", "Letzte Notizen:", ...last);
   z.push("", "Eingetragen vom Tourenplaner");
   return { summary: "Kundenbesuch: " + c.n1, location: [c.str, (c.plz + " " + c.ort).trim()].filter(Boolean).join(", "), description: z.join("\n"),
@@ -385,7 +385,7 @@ function renderPlan() {
       const a = alt[c.id], ac = a && byId(a.id);
       html += `<li class="leg"><span class="drv">${L.geschaetzt && nGesch < legs.length ? "≈ " : ""}${Math.round(L.km)} km · ${Math.round(L.min)} Min.</span></li>
        <li class="stop${done ? " done" : ""}${L.fixed ? " isfix" : ""}"><div class="t"><span class="nr" style="background:var(--dc)">${nr}</span>${hhmm(L.begin)}${L.fixed ? `<span class="fixb">fix</span>` : ""}</div><div class="who"><button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> ${abcTag(c)}
-       <div class="sub">${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)} · ${navLink(c, "Navi")}${c.tel ? " · " + telLink(c.tel) : ""} · ${L.dur} Min. · ${dueText(c)}${!c.oh ? " · Öffnungszeiten unbekannt" : c.ohp.known ? "" : " · Öffnungszeiten nicht lesbar"}</div>${L.warn ? `<div class="warn">${esc(L.warn)}</div>` : ""}${L.fixed ? kalHinweis(c.id) : ""}</div>
+       <div class="sub">${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)} · ${navLink(c, "Navi")}${c.tel ? " · " + telLink(c.tel) : ""}${c.mob ? " · Mobil " + telLink(c.mob) : ""} · ${L.dur} Min. · ${dueText(c)}${!c.oh ? " · Öffnungszeiten unbekannt" : c.ohp.known ? "" : " · Öffnungszeiten nicht lesbar"}</div>${L.warn ? `<div class="warn">${esc(L.warn)}</div>` : ""}${L.fixed ? kalHinweis(c.id) : ""}</div>
        <div class="acts">${done ? `<span class="ok">besucht</span>` : D.abgeschlossen ? `<span class="warn">nicht angetroffen</span>` : `${L.fixed ? `<button data-a="unfix" data-d="${di}" data-id="${c.id}">Fix lösen</button>` : `<button class="fixbtn" data-a="fix" data-d="${di}" data-id="${c.id}" data-time="${hhmm(L.begin)}">Termin fix</button>`}<button data-a="visit" data-id="${c.id}">Besuch erfassen</button>`}<button class="ghost" data-a="rm" data-d="${di}" data-id="${c.id}" aria-label="${esc(c.n1)} aus der Tour nehmen">Entfernen</button></div>
        ${done ? "" : ac ? `<div class="alt"><span>Falls keine Zeit: <b>${esc(ac.n1)}</b> · ${esc(ac.ort)}, ${a.km < 1 ? "gleicher Ort" : Math.round(a.km) + " km entfernt"}${ac.tel ? " · " + telLink(ac.tel) : ""}${a.weit ? " · " + (P.MERKMAL() ? "kein " + esc(P.MERKMAL()) : "wenig Umsatz") : ""}</span><button data-a="alt" data-d="${di}" data-id="${c.id}" data-alt="${ac.id}">Alternative nehmen</button></div>`
         : `<div class="alt">Keine Alternative in der Nähe gefunden</div>`}</li>`;
@@ -663,8 +663,9 @@ function openCustomer(id) {
    <p class="muted">${kdText(c)}</p>
    <p>${esc(c.n2)} ${esc(c.n3)}<br>${esc(c.str)}, ${esc(c.plz)} ${esc(c.ort)}<br>${navLink(c, "Navigation starten")}</p>
    <dl class="facts"><dt>Telefon</dt><dd>${c.tel ? telLink(c.tel) : "–"}</dd>
+   <dt>Mobil</dt><dd>${c.mob ? telLink(c.mob) : "–"}</dd>${c.tel2 ? `<dt>Telefon 2</dt><dd>${telLink(c.tel2)}</dd>` : ""}
    <dt>E-Mail</dt><dd>${c.mail ? `<a href="mailto:${esc(c.mail)}">${esc(c.mail)}</a>` : "–"}</dd>
-   <dt>Ansprechpartner</dt><dd>${esc(c.ap || "–")}${c.pos ? " (" + esc(c.pos) + ")" : ""}${c.dk ? " · " + esc(c.dk) : ""}</dd>
+   <dt>Ansprechpartner</dt><dd>${esc(c.ap || "–")}${c.pos ? " (" + esc(c.pos) + ")" : ""}${c.dk ? " · " + telLink(c.dk) : ""}</dd>
    <dt>Öffnungszeiten</dt><dd>${esc(c.oh || "unbekannt")}${c.oh && !c.ohp.known ? `<br><span class="warn">Kann vom Programm nicht gelesen werden – geplant wird mit Mo–Fr 8–18 Uhr. Bitte z. B. so schreiben: Mo-Fr 9-12 und 14:30-18 Uhr</span>` : ""}</dd>
    <dt>Umsatz</dt><dd>${Object.keys(c.ums || {}).sort().reverse().map(j => j + ": " + eur(c.ums[j])).join(" · ") || "–"}</dd>${trendLang(c)}${Object.entries(c.extra || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
    <dt>Besuch</dt><dd>Letzter: ${fmtD(c.lv)} · Dauer ${P.dauer(c)} Min. · ${c.dHome != null ? Math.round(c.dHome) + " km ab Bremen" : "Lage unbekannt"}</dd>
@@ -705,7 +706,7 @@ function alternativeNehmen(di, id, altId) {
 function fixDialog(di, id, t) {
   const c = byId(id), D = PLAN().days[di];
   dlg(`<header class="dh"><h3>Termin bei ${esc(c.n1)}</h3><button value="x" class="ghost">Abbrechen</button></header>
-   <p>${WD[D.day]}, ${fmtD(D.date)}${c.tel ? " · " + telLink(c.tel) : ""}</p>
+   <p>${WD[D.day]}, ${fmtD(D.date)}${c.tel ? " · " + telLink(c.tel) : ""}${c.mob ? " · Mobil " + telLink(c.mob) : ""}</p>
    <label>Bestätigte Uhrzeit<input type="time" id="fxt" value="${esc(t)}" required></label>
    <p class="muted">Feste Termine bleiben beim Neuplanen erhalten. Die übrigen Besuche des Tages werden um sie herum geplant.</p>
    <div class="row"><button class="pri" value="savefix" data-id="${id}" data-d="${di}">Termin fix setzen</button></div>`);
@@ -743,7 +744,7 @@ const FRUEHESTE_ABFAHRT = "05:30";
 function terminDialog(id) {
   const c = byId(id), f = TERMINE()[id];
   dlg(`<header class="dh"><h3>Termin bei ${esc(c.n1)}</h3><button value="x" class="ghost">Abbrechen</button></header>
-   <p>${[c.tel ? telLink(c.tel) : "", c.oh ? "Öffnungszeiten: " + esc(c.oh) : ""].filter(Boolean).join(" · ")}</p>
+   <p>${[c.tel ? telLink(c.tel) : "", c.mob ? "Mobil " + telLink(c.mob) : "", c.oh ? "Öffnungszeiten: " + esc(c.oh) : ""].filter(Boolean).join(" · ")}</p>
    <div class="grid2"><label>Datum<input type="date" id="td" value="${f ? esc(f.date) : ""}" required></label>
    <label>Uhrzeit<input type="time" id="tt" value="${f ? esc(f.time) : ""}" required></label></div>
    <p id="tdh" class="warn" aria-live="polite"></p>
@@ -930,8 +931,8 @@ function editDialog(id) {
     : `<label>Kd.-Nr.<input value="${esc(id)}" disabled></label>`;
   const fld = (k, l, t = "text", rq = "") => `<label>${l}<input type="${t}" id="e-${k}" value="${esc(c[k] || "")}" ${rq}></label>`;
   dlg(`<header class="dh"><h3>${id ? "Kunde bearbeiten" : "Neuer Kunde"}</h3><button value="x" class="ghost" formnovalidate>Abbrechen</button></header>
-   <div class="grid2">${kdFeld}${fld("n1", "Firma", "text", "required")}${fld("n2", "Zusatz")}${fld("str", "Straße")}${fld("plz", "PLZ", "text", 'required inputmode="numeric" pattern="[0-9]{5}"')}${fld("ort", "Ort")}${fld("tel", "Telefon", "tel")}${fld("mail", "E-Mail", "email")}
-   ${fld("ap", "Ansprechpartner")}${fld("pos", "Position")}${fld("dk", "Direktkontakt", "tel")}
+   <div class="grid2">${kdFeld}${fld("n1", "Firma", "text", "required")}${fld("n2", "Zusatz")}${fld("str", "Straße")}${fld("plz", "PLZ", "text", 'required inputmode="numeric" pattern="[0-9]{5}"')}${fld("ort", "Ort")}${fld("tel", "Telefon", "tel")}${fld("mob", "Mobil", "tel")}${fld("tel2", "Telefon 2 (z. B. Werkstatt)", "tel")}${fld("mail", "E-Mail", "email")}
+   ${fld("ap", "Ansprechpartner")}${fld("pos", "Position")}${fld("dk", "Direktkontakt Ansprechpartner", "tel")}
    <label>Priorität<select id="e-abc">${["A", "B", "C"].map(x => `<option ${c.abc === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
    <label>Letzter Besuch<input type="date" id="e-lv" value="${esc(c.lv || "")}"></label>
    <label>Besuchsdauer (Min., leer = Standard ${S().visitMin})<input type="number" id="e-vm" value="${esc(c.vm || "")}"></label></div>
@@ -1024,7 +1025,7 @@ function dlgAktion(v, btn) {
   }
   if (v === "saveedit") {
     const g = k => ($("#e-" + k)?.value || "").trim();
-    const f = { n1: g("n1"), n2: g("n2"), str: g("str"), plz: g("plz"), ort: g("ort"), tel: g("tel"), mail: g("mail"), ap: g("ap"), pos: g("pos"), dk: g("dk"), abc: g("abc"), oh: g("oh"), vm: +g("vm") || null };
+    const f = { n1: g("n1"), n2: g("n2"), str: g("str"), plz: g("plz"), ort: g("ort"), tel: g("tel"), mob: g("mob"), tel2: g("tel2"), mail: g("mail"), ap: g("ap"), pos: g("pos"), dk: g("dk"), abc: g("abc"), oh: g("oh"), vm: +g("vm") || null };
     const lv = g("lv");
     const kd = g("kd"), fehler = msg => { editDialog(id); setTimeout(() => { $("#e-msg").textContent = msg; }, 0); };
     if (!f.n1 || !f.plz) { fehler("Firma und PLZ werden benötigt."); return; }
