@@ -9,6 +9,7 @@ import * as F from "./fahrzeiten.js";
 import * as B from "./bestellung.js";
 import * as BF from "./beanstandung.js";
 import * as A from "./auswertung.js";
+import * as NH from "./naehe.js";
 
 const $ = s => document.querySelector(s);
 const XLSX = window.XLSX;
@@ -498,7 +499,7 @@ function renderList() {
   if (FILTER.trend) L.sort((a, b) => (b.trendAlt - b.trendHoch) - (a.trendAlt - a.trendHoch)); // größter Verlust in Euro zuerst
   else L.sort((a, b) => b.urg - a.urg);
   return `<div class="listhead"><div><h2>Kunden</h2><p class="muted">${P.CUST.length} aktiv · ${P.MERKMAL() ? "Planung: nur " + esc(P.MERKMAL()) + " · " : ""}${P.LAENGST() ? "am längsten nicht besuchte zuerst" : "sortiert nach Umsatz " + S().umsatzJahr}</p></div>
-   <div class="row"><button class="pri" data-a="new">Kunde hinzufügen</button><button data-a="export">Als Excel sichern</button></div></div>
+   <div class="row"><button data-a="naehe">In der Nähe</button><button class="pri" data-a="new">Kunde hinzufügen</button><button data-a="export">Als Excel sichern</button></div></div>
    <div class="filters"><input type="search" id="q" placeholder="Name, Ort oder PLZ suchen" value="${esc(FILTER.q)}" aria-label="Kunden suchen">
    <select id="fabc" aria-label="Priorität"><option value="">Alle Prioritäten</option>${["A", "B", "C"].map(x => `<option ${FILTER.abc === x ? "selected" : ""}>${x}</option>`).join("")}</select>
    ${haekchenSpalten().length ? `<select id="fmerkmal" aria-label="Merkmal"><option value="">Alle Kunden</option>${haekchenSpalten().map(s => `<option value="${esc(s)}" ${FILTER.merkmal === s ? "selected" : ""}>nur ${esc(s)}</option>`).join("")}</select>` : ""}
@@ -653,7 +654,7 @@ async function exportXlsx(inOrdner) {
 }
 
 /* ---------- Dialoge ---------- */
-function dlg(html) { const d = $("#dlg"); d.classList.remove("breit"); d.innerHTML = `<form method="dialog" class="dlgin">${html}</form>`; d.showModal(); return d; }
+function dlg(html) { const d = $("#dlg"); d.classList.remove("breit"); d.innerHTML = `<form method="dialog" class="dlgin">${html}</form>`; if (!d.open) d.showModal(); return d; }
 function openCustomer(id) {
   const c = byId(id); if (!c) return;
   const PL = PLAN();
@@ -1179,36 +1180,98 @@ async function beanstandungFormular(id, werte) {
   d.classList.add("breit");
   const form = d.querySelector("form");
   form.oninput = () => { try { localStorage.setItem(ENTWURF_KEY, JSON.stringify({ id, art: "beanstandung", w: BF.werteLesen(form) })); } catch (err) { /* egal */ } };
+  // Fotos (nur im Speicher, nicht im Entwurf): bei „Ändern“ die Fotos der letzten Beanstandung übernehmen
+  BF_FOTOS = werte && BEST && BEST.art === "beanstandung" ? (BEST.fotos || []).slice() : [];
+  fotosZeigen();
+  $("#bffotos").onchange = async ev => {
+    const neu = [...ev.target.files]; ev.target.value = "";
+    if (neu.length) toast(neu.length === 1 ? "Foto wird übernommen …" : neu.length + " Fotos werden übernommen …");
+    for (const f of neu) BF_FOTOS.push(await BF.fotoVerkleinern(f));
+    fotosZeigen();
+  };
 }
+let BF_FOTOS = [], FOTO_URLS = [];
+function fotosZeigen() {
+  const el = $("#bffotoliste"); if (!el) return;
+  FOTO_URLS.forEach(u => URL.revokeObjectURL(u)); FOTO_URLS = BF_FOTOS.map(b => URL.createObjectURL(b));
+  el.innerHTML = BF_FOTOS.length ? FOTO_URLS.map((u, i) => `<figure><img src="${u}" alt="Foto ${i + 1}"><button type="button" data-fi="${i}" aria-label="Foto ${i + 1} entfernen">Entfernen</button></figure>`).join("") : `<p class="muted">Noch keine Fotos.</p>`;
+  el.querySelectorAll("button[data-fi]").forEach(b => { b.onclick = () => { BF_FOTOS.splice(+b.dataset.fi, 1); fotosZeigen(); }; });
+}
+const fotoEndung = typ => ({ "image/jpeg": "jpg", "image/png": "png", "image/heic": "heic", "image/heif": "heif", "image/webp": "webp" })[typ] || "jpg";
 async function beanstandungErstellen(id) {
-  const w = BF.werteLesen($("#dlg form"));
+  const w = BF.werteLesen($("#dlg form")), fotos = BF_FOTOS.slice();
+  if (fotos.length) w["beilage:Foto beigefügt"] = true;
   const vorlage = await vorlageHolen("beanstandung");
   if (!vorlage) throw new Error("Vorlage fehlt");
-  const docx = BF.ausfuellen(XLSX, vorlage, w), name = BF.dateiname(w);
-  BEST = { id, art: "beanstandung", w, pdf: docx, name, typ: BF.DOCX_TYP };
+  const docx = BF.ausfuellen(XLSX, vorlage, w), name = BF.dateiname(w), basis = name.replace(/\.docx$/, "");
+  const anhaenge = fotos.map((b, i) => ({ name: `${basis}_Foto${i + 1}.${fotoEndung(b.type)}`, blob: b, typ: b.type || "image/jpeg" }));
+  BEST = { id, art: "beanstandung", w, pdf: docx, name, typ: BF.DOCX_TYP, fotos, anhaenge };
   entwurfWeg();
   const k = roh(id);
   if (k) { k.notes = (k.notes || []).concat({ d: today(), t: "Beanstandung erstellt" + (w.artikel ? ": " + w.artikel : "") + (w.schaden ? " – " + w.schaden.replace(/\s*\n\s*/g, " ") : "") }); geaendert(); }
   let drive = "";
   if (driveBereit()) {
-    try { await G.bestellungSpeichern(name, docx, BF.DOCX_TYP, G.BEANSTANDUNG_ORDNER); drive = `In Google Drive › ${G.ORDNER} › ${G.BEANSTANDUNG_ORDNER} gespeichert.`; }
-    catch (e) { console.warn(e); drive = "Google Drive war nicht erreichbar – bitte die Datei teilen oder herunterladen."; }
-  } else if (G.konfiguriert()) drive = "Nicht mit Google verbunden – die Datei wurde nicht in Google Drive gespeichert.";
+    try {
+      await G.bestellungSpeichern(name, docx, BF.DOCX_TYP, G.BEANSTANDUNG_ORDNER);
+      for (const a of anhaenge) await G.bestellungSpeichern(a.name, a.blob, a.typ, G.BEANSTANDUNG_ORDNER);
+      drive = `In Google Drive › ${G.ORDNER} › ${G.BEANSTANDUNG_ORDNER} gespeichert${anhaenge.length ? " (mit Fotos)" : ""}.`;
+    } catch (e) { console.warn(e); drive = "Google Drive war nicht erreichbar – bitte die Dateien teilen oder herunterladen."; }
+  } else if (G.konfiguriert()) drive = "Nicht mit Google verbunden – die Dateien wurden nicht in Google Drive gespeichert.";
+  const fotoText = anhaenge.length === 1 ? " + 1 Foto" : anhaenge.length ? ` + ${anhaenge.length} Fotos` : "";
   dlg(`<header class="dh"><h3>Beanstandung: fertig</h3><button value="x" class="ghost">Schließen</button></header>
-   <p>${esc(name)} (Word-Datei)</p>${drive ? `<p class="muted">${esc(drive)}</p>` : ""}
-   <p class="muted">Beim Kunden wurde eine Notiz eingetragen. Fotos bitte beim Teilen in der Mail anhängen.</p>
+   <p>${esc(name)} (Word-Datei${fotoText})</p>${drive ? `<p class="muted">${esc(drive)}</p>` : ""}
+   <p class="muted">Beim Kunden wurde eine Notiz eingetragen.${anhaenge.length ? " Beim Teilen gehen die Fotos mit." : ""}</p>
    <div class="row wrap"><button class="pri" value="bestteilen">Teilen / per Mail senden</button><button value="bestladen">Herunterladen</button><button value="bestaendern">Ändern</button></div>`);
 }
+// Fertiges Formular plus Anhänge (Fotos der Beanstandung)
+const ergebnisDateien = () => [{ name: BEST.name, blob: new Blob([BEST.pdf], { type: BEST.typ }) }].concat((BEST.anhaenge || []).map(a => ({ name: a.name, blob: a.blob })));
 function bestellungLaden() {
   if (!BEST) return;
-  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([BEST.pdf], { type: BEST.typ }));
-  a.download = BEST.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  ergebnisDateien().forEach(({ name, blob }, i) => setTimeout(() => { // nacheinander, sonst blockiert der Browser mehrere Downloads
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  }, i * 400));
 }
 function bestellungTeilen() {
   if (!BEST) return;
-  const datei = new File([BEST.pdf], BEST.name, { type: BEST.typ });
-  if (navigator.canShare && navigator.canShare({ files: [datei] })) navigator.share({ files: [datei], title: BEST.name }).catch(e => { if (e.name !== "AbortError") bestellungLaden(); });
+  const dateien = ergebnisDateien().map(({ name, blob }) => new File([blob], name, { type: blob.type || "application/octet-stream" }));
+  if (navigator.canShare && navigator.canShare({ files: dateien })) navigator.share({ files: dateien, title: BEST.name }).catch(e => { if (e.name !== "AbortError") bestellungLaden(); });
   else { bestellungLaden(); toast("Teilen geht hier nicht – die Datei wurde heruntergeladen"); }
+}
+
+/* ---------- Kunden in der Nähe (Standort bleibt auf dem Gerät; nur nach Entfernung, ohne Umsatz) ---------- */
+let NAEHE = null; // { pos: { lat, lng }, genau (Meter), zeit }
+function naeheDialog() {
+  const frisch = NAEHE && Date.now() - NAEHE.zeit < 5 * 60e3;
+  dlg(`<header class="dh"><h3>Kunden in der Nähe</h3><button value="x" class="ghost">Schließen</button></header>
+   <div id="naeheinhalt">${frisch ? naeheListe() : `<p class="muted">Standort wird bestimmt …</p>`}</div>
+   <div class="row"><button type="button" id="naeheneu">Standort neu bestimmen</button></div>`);
+  $("#naeheneu").onclick = orten;
+  orten();
+}
+function orten() {
+  const ziel = () => $("#naeheinhalt"), zeige = html => { if (ziel()) ziel().innerHTML = html; };
+  if (!navigator.geolocation) { zeige(`<p class="warn">Dieses Gerät kann den Standort nicht bestimmen.</p>`); return; }
+  if (!NAEHE && ziel()) zeige(`<p class="muted">Standort wird bestimmt …</p>`);
+  navigator.geolocation.getCurrentPosition(
+    p => { NAEHE = { pos: { lat: p.coords.latitude, lng: p.coords.longitude }, genau: p.coords.accuracy || 0, zeit: Date.now() }; zeige(naeheListe()); },
+    e => zeige(`<p class="warn">${e.code === 1
+      ? "Der Standort ist nicht freigegeben. Auf dem iPhone: Einstellungen › Datenschutz &amp; Sicherheit › Ortungsdienste › Safari-Websites › „Beim Verwenden der App“."
+      : e.code === 3 ? "Die Standortbestimmung dauert zu lange – bitte „Standort neu bestimmen“ tippen." : "Der Standort konnte nicht bestimmt werden (kein Empfang?)."}</p>${NAEHE ? naeheListe() : ""}`),
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+}
+function naeheListe() {
+  const L = NH.naechste(P.CUST, NAEHE.pos, 20);
+  if (!L.length) return `<p class="muted">Keine Kunden mit bekannter Lage.</p>`;
+  const uhr = new Date(NAEHE.zeit).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  return `<p class="muted">Standort von ${uhr} Uhr${NAEHE.genau > 1000 ? ` (ungenau, ca. ${NH.kmText(NAEHE.genau / 1000)})` : ""}. Entfernung in Luftlinie bis zur Mitte des PLZ-Gebiets – also ungefähr.</p>
+   <ul class="naehe">${L.map(({ c, km }) => {
+    const o = NH.jetztOffen(c);
+    const offen = !o ? "" : o.termin ? "nach Vereinbarung" : o.offen ? `<span class="auf">geöffnet bis ${o.bis}</span>` : `<span class="zu">geschlossen${o.ab ? " · öffnet " + o.ab : ""}</span>`;
+    return `<li><b class="km">${NH.kmText(km)}</b><div><button class="link" data-a="open" data-id="${esc(c.id)}">${esc(c.n1)}</button>
+     <div class="sub">${esc([c.str, (c.plz + " " + c.ort).trim()].filter(Boolean).join(", "))}</div>
+     <div class="sub">${[navLink(c, "Navi"), c.tel ? telLink(c.tel) : "", c.mob ? "Mobil " + telLink(c.mob) : "", offen].filter(Boolean).join(" · ")}</div></div></li>`;
+  }).join("")}</ul>`;
 }
 
 function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), Math.max(2600, t.length * 55)); }
@@ -1239,6 +1302,7 @@ document.addEventListener("click", async e => {
     if (a === "spalteneu") spalteHinzufuegen();
     if (a === "woche") { if ($("#dlg").open) $("#dlg").close(); wocheAnsehen(b.dataset.datum); }
     if (a === "open") openCustomer(b.dataset.id);
+    if (a === "naehe") naeheDialog();
     if (a === "awort") { AUSW.q = AUSW.q.toLowerCase() === b.dataset.w ? "" : b.dataset.w; render(); }
     if (a === "auswexport") auswertungExport();
     if (a === "visit") visitDialog(b.dataset.id);

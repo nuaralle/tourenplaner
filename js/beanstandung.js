@@ -10,8 +10,8 @@ export const DOCX_TYP = "application/vnd.openxmlformats-officedocument.wordproce
 // Textfelder: Schlüssel -> Nummer(n) des Textfelds (zwei Nummern = zwei Zeilen)
 const TEXT = [
   { k: "nr", l: "Reklamationsbericht Nr.", f: [59] }, { k: "datum", l: "Datum", f: [58] },
-  { k: "kd", l: "Kunden-Nr.", f: [2] }, { k: "kunde", l: "Kunde", f: [13], breit: 1 }, { k: "anschrift", l: "Anschrift", f: [15], breit: 1 }, { k: "plzort", l: "PLZ & Ort", f: [17] },
-  { k: "ev", l: "Endverbraucher", f: [18], breit: 1 }, { k: "ev_anschrift", l: "Anschrift", f: [22], breit: 1 }, { k: "ev_plzort", l: "PLZ & Ort", f: [24] },
+  { k: "kd", l: "Kunden-Nr.", f: [2] }, { k: "kunde", l: "Kunde", f: [13], breit: 1 }, { k: "anschrift", l: "Anschrift", f: [15], breit: 1 }, { k: "plzort", l: "PLZ & Ort", f: [17], breit: 1 },
+  { k: "ev", l: "Endverbraucher", f: [18], breit: 1 }, { k: "ev_anschrift", l: "Anschrift", f: [22], breit: 1 }, { k: "ev_plzort", l: "PLZ & Ort", f: [24], breit: 1 },
   { k: "artikel", l: "Artikelname", f: [25], breit: 1 }, { k: "menge", l: "Menge", f: [26], m: "decimal" }, { k: "rechnung", l: "Rechnungs-Nr.", f: [27] },
   { k: "verwendung", l: "Verwendung", f: [28, 29], zeilen: 2 }, { k: "schaden", l: "Schadensbild", f: [33, 34], zeilen: 2 },
   { k: "loesung", l: "Lösungsvorschlag", f: [35, 36], zeilen: 2 },
@@ -143,7 +143,24 @@ export function formularHTML(w) {
     + fs("Zustand", gruppe(G("zustand"), w) + gruppe(G("gebrauch"), w) + gruppe(G("hinweis"), w))
     + fs("Schaden", inp("schaden", w) + gruppe(G("schaden"), w))
     + fs("Lösung", inp("loesung", w) + gruppe(G("beilage"), w))
+    + `<fieldset class="bgr"><legend>Fotos</legend>
+       <label class="fotoknopf">Foto aufnehmen oder auswählen<input type="file" id="bffotos" accept="image/*" multiple></label>
+       <div id="bffotoliste" class="fotos"></div>
+       <p class="hint">Fotos werden beim Teilen zusammen mit der Word-Datei verschickt und in Google Drive abgelegt; „Foto beigefügt“ wird dann automatisch angekreuzt.</p></fieldset>`
     + `<p class="hint">Zweizeilige Felder: Ein Zeilenumbruch beginnt die zweite Zeile, sonst wird nach etwa 78 Zeichen umbrochen.</p>`;
+}
+// Foto für die Mail verkleinern (längste Seite höchstens 2048 Pixel, JPEG). Klappt das nicht, bleibt das Original.
+export async function fotoVerkleinern(datei, max = 2048) {
+  try {
+    const url = URL.createObjectURL(datei);
+    const img = await new Promise((ok, fehler) => { const i = new Image(); i.onload = () => ok(i); i.onerror = fehler; i.src = url; });
+    URL.revokeObjectURL(url);
+    const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const cv = document.createElement("canvas"); cv.width = Math.round(img.naturalWidth * s); cv.height = Math.round(img.naturalHeight * s);
+    cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+    const blob = await new Promise(ok => cv.toBlob(ok, "image/jpeg", 0.85));
+    return blob && blob.size ? blob : datei;
+  } catch (e) { return datei; }
 }
 export function werteLesen(root) {
   const w = {};

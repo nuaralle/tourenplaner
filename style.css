@@ -148,3 +148,11 @@ input[type=date],input[type=time]{-webkit-appearance:none;appearance:none;displa
 input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and-time-value{text-align:left}
 .row label{min-width:0;flex:0 1 10rem}
 .planhead .row label{flex:1 1 9.5rem}
+/* Kunden in der Nähe */
+.naehe{list-style:none;margin:0;padding:0}.naehe li{display:grid;grid-template-columns:4.2rem 1fr;gap:.6rem;padding:.6rem 0;border-top:1px solid var(--line)}
+.naehe .km{font:700 1.05rem var(--disp);color:var(--acc)}.naehe .sub{font-size:.88rem;color:var(--muted)}
+.naehe .auf{color:var(--ok)}.naehe .zu{color:var(--warn)}
+/* Fotos bei der Beanstandung */
+.fotoknopf input{padding:.5rem;background:var(--surf)}
+.fotos{display:flex;flex-wrap:wrap;gap:.6rem}.fotos figure{margin:0;display:flex;flex-direction:column;gap:.25rem;width:110px}
+.fotos img{width:110px;height:110px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}.fotos button{min-height:30px;padding:.15rem .4rem;font-size:.82rem}
