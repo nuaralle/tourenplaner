@@ -93,9 +93,9 @@ async function anlegen(name, inhalt, typ, ordner) {
   return r.json();
 }
 
-/* ---------- Unterordner im Ordner „Tourenplaner“ („Sicherungen“, „Bestellungen“) ---------- */
-export const SICHERUNG_ORDNER = "Sicherungen", BESTELL_ORDNER = "Bestellungen";
-const ORDNER_KEY = { [SICHERUNG_ORDNER]: "sicherungen", [BESTELL_ORDNER]: "bestellungen" };
+/* ---------- Unterordner im Ordner „Tourenplaner“ („Sicherungen“, „Bestellungen“, „Beanstandungen“) ---------- */
+export const SICHERUNG_ORDNER = "Sicherungen", BESTELL_ORDNER = "Bestellungen", BEANSTANDUNG_ORDNER = "Beanstandungen";
+const ORDNER_KEY = { [SICHERUNG_ORDNER]: "sicherungen", [BESTELL_ORDNER]: "bestellungen", [BEANSTANDUNG_ORDNER]: "beanstandungen" };
 async function unterordner(name, neuSuchen) {
   const key = ORDNER_KEY[name];
   const g = lesen(); if (g[key] && !neuSuchen) return g[key];
@@ -109,10 +109,10 @@ async function unterordner(name, neuSuchen) {
   const g2 = lesen(); g2[key] = id; schreiben(g2); return id;
 }
 const sicherungsOrdner = neu => unterordner(SICHERUNG_ORDNER, neu);
-// Ausgefülltes Bestellformular in „Tourenplaner › Bestellungen“ ablegen
-export async function bestellungSpeichern(name, inhalt) {
+// Ausgefülltes Formular in einem Unterordner ablegen (Bestellungen: PDF, Beanstandungen: Word)
+export async function bestellungSpeichern(name, inhalt, typ = "application/pdf", ordner = BESTELL_ORDNER) {
   for (const neu of [false, true]) {
-    try { return await anlegen(name, inhalt, "application/pdf", await unterordner(BESTELL_ORDNER, neu)); }
+    try { return await anlegen(name, inhalt, typ, await unterordner(ordner, neu)); }
     catch (e) { if (neu || e.code === "anmelden") throw e; }
   }
 }

@@ -46,7 +46,7 @@ async function vorgang(modus, fn) {
 export async function dateiLesen(name) { try { return await vorgang("readonly", s => s.get(name)) || null; } catch (e) { return null; } }
 export async function dateiAblegen(name, daten) { return vorgang("readwrite", s => s.put(daten, name)); }
 
-// PDF-Vorlagen aus dem Ordner „Vorlagen“ (nur wenn die App über werkzeuge/server.js läuft)
+// Formular-Vorlagen (PDF/Word) aus dem Ordner „Vorlagen“ (nur wenn die App über werkzeuge/server.js läuft)
 export async function vorlagenImOrdner() {
   try { const r = await fetch("lokal/vorlagen", { headers: H }); return r.ok ? await r.json() : []; } catch (e) { return []; }
 }

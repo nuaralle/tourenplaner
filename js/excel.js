@@ -9,7 +9,7 @@ const SPALTEN = [
   ["Telefon", "tel"], ["Email", "mail"], ["Rabatt", "rab"], ["Preisgruppe", "pg"],
   ["Priorität (ABC)", "abc"], ["Ansprechpartner", "ap"], ["Position/Funktion", "pos"], ["Direktkontakt (Tel./Mobil)", "dk"],
   ["Öffnungszeiten", "oh"], ["Besuchsdauer (Min.)", "vm"], ["Besuchsrhythmus (Wochen)", "rh"], ["Letzter Besuch", "lv"],
-  ["Aus Planung genommen", "hold"], ["Notizen", "notes"], ["Neu angelegt", "isNew"], ["Deaktiviert", "inactive"],
+  ["Aus Planung genommen", "hold"], ["Notizen", "notes"], ["Private Notizen", "pnotes"], ["Neu angelegt", "isNew"], ["Deaktiviert", "inactive"],
 ];
 const BEKANNT = new Set(SPALTEN.map(s => s[0]));
 // Eigene Spalten, die in der Kundenliste angelegt wurden (nicht vom Programm vorgegeben, keine Umsatz-Spalte)
@@ -26,6 +26,7 @@ export function kundenNormalisieren(kunden) {
     if (!k.ums) { k.ums = {}; if ("u25" in k) k.ums[2025] = k.u25 || 0; if ("u24" in k) k.ums[2024] = k.u24 || 0; }
     delete k.u25; delete k.u24;
     if (!k.extra) k.extra = {};
+    if (!k.pnotes) k.pnotes = []; // private Notizen (eigene Spalte, seit 2026-10-09)
   }
   return kunden;
 }
@@ -93,7 +94,7 @@ export function leseStand(XLSX, daten) {
       id, n1: txt(k.n1), n2: txt(k.n2), n3: txt(k.n3), plz: txt(k.plz).replace(/\D/g, "").padStart(5, "0"), ort: txt(k.ort), str: txt(k.str),
       tel: txt(k.tel), mail: txt(k.mail), rab: txt(k.rab), pg: txt(k.pg), ums,
       abc: (txt(k.abc).toUpperCase().match(/[ABC]/) || ["C"])[0], ap: txt(k.ap), pos: txt(k.pos), dk: txt(k.dk), oh: txt(k.oh),
-      vm: zahl(k.vm) || null, rh: zahl(k.rh) || null, lv: datum(k.lv), hold: ja(k.hold), notes: notizenLesen(k.notes),
+      vm: zahl(k.vm) || null, rh: zahl(k.rh) || null, lv: datum(k.lv), hold: ja(k.hold), notes: notizenLesen(k.notes), pnotes: notizenLesen(k.pnotes),
       isNew: ja(k.isNew), inactive: ja(k.inactive), extra,
     };
     if (!c.n1 && !txt(k.id)) return; // leere Zeile
@@ -184,7 +185,8 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
   // Spalten: Reihenfolge wie in der Datei; fehlende bekannte, Umsatz- und eigene Spalten hinten anhängen
   const kopf = (spalten && spalten.length ? spalten : STANDARD_REIHENFOLGE).slice();
   const dazu = s => { if (!kopf.includes(s)) kopf.push(s); };
-  SPALTEN.forEach(s => dazu(s[0]));
+  // fehlende Programm-Spalten direkt hinter ihre Vorgängerin setzen (z. B. „Private Notizen“ hinter „Notizen“)
+  SPALTEN.forEach((s, i) => { if (kopf.includes(s[0])) return; const vor = i ? kopf.indexOf(SPALTEN[i - 1][0]) : -1; if (vor >= 0) kopf.splice(vor + 1, 0, s[0]); else dazu(s[0]); });
   const jahreImKopf = new Set(kopf.map(umsatzJahr).filter(Boolean));
   umsatzJahre(kunden).filter(j => !jahreImKopf.has(j)).forEach(j => dazu("Umsatz " + String(j).slice(2)));
   kunden.forEach(c => Object.keys(c.extra).forEach(dazu));
@@ -196,7 +198,7 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
       let v;
       if (f) {
         v = c[f];
-        if (f === "notes") v = notizenText(c.notes);
+        if (f === "notes" || f === "pnotes") v = notizenText(c[f]);
         else if (f === "hold" || f === "isNew" || f === "inactive") v = v ? "ja" : "";
         else if (v == null) v = "";
       } else if (j) v = c.ums[j] ?? "";
@@ -295,7 +297,7 @@ export function abgleichAnwenden(kunden, liste, vorschlag, auswahl) {
   }
   for (const z of vorschlag.neu) if (auswahl.neu.has(z.id)) {
     kunden.push({ id: z.id, n1: z.n1 || "", n2: z.n2 || "", n3: z.n3 || "", plz: z.plz || "", ort: z.ort || "", str: z.str || "", tel: z.tel || "", mail: z.mail || "",
-      rab: z.rab || "", pg: z.pg || "", ums: { ...z.ums }, abc: "C", ap: "", pos: "", dk: "", oh: "", vm: null, rh: null, lv: "", hold: false, notes: [],
+      rab: z.rab || "", pg: z.pg || "", ums: { ...z.ums }, abc: "C", ap: "", pos: "", dk: "", oh: "", vm: null, rh: null, lv: "", hold: false, notes: [], pnotes: [],
       isNew: false, inactive: false, extra: {} });
     erg.neu++;
   }
