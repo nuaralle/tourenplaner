@@ -8,6 +8,7 @@ import * as G from "./google.js";
 import * as F from "./fahrzeiten.js";
 import * as B from "./bestellung.js";
 import * as BF from "./beanstandung.js";
+import * as A from "./auswertung.js";
 
 const $ = s => document.querySelector(s);
 const XLSX = window.XLSX;
@@ -17,6 +18,7 @@ const XLSX_TYP = "application/vnd.openxmlformats-officedocument.spreadsheetml.sh
 // DATA: { kunden, einst, plan, kalLoeschen, quelle, ungesichert, drive:{id,modifiedTime}, driveOffen, aenderung }
 let DATA = null;
 let ORDNER = null;      // Infos zum Tourenplaner-Ordner, wenn die App auf dem Rechner läuft
+let AUSW = { zr: "3m", von: "", bis: "", q: "" }; // Auswertung der Notizen
 let TAB = "plan", FILTER = { q: "", abc: "", due: false, merkmal: "", ohneOh: false, trend: false };
 let SPEICHER_OK = true, SYNC_LAEUFT = false, SYNC_FEHLER = "", KONFLIKT = null, syncTimer = null;
 let FZ = F.neueTabelle(), FZ_LAEUFT = "", FZ_MELDUNG = "";
@@ -231,6 +233,7 @@ function render() {
   aufbereiten();
   if (TAB === "plan") { m.innerHTML = renderPlan(); drawMap(); }
   else if (TAB === "kunden") m.innerHTML = renderList();
+  else if (TAB === "auswertung") m.innerHTML = renderAuswertung();
   else m.innerHTML = renderSettings();
 }
 function renderStart() {
@@ -506,6 +509,40 @@ function renderList() {
    <span class="cd">${dueText(c)}</span></button></li>`).join("")}</ul>${L.length > 200 ? `<p class="muted">${L.length - 200} weitere – bitte Suche nutzen.</p>` : ""}`;
 }
 
+/* ---------- Auswertung der geschäftlichen Notizen (private Notizen nie) ---------- */
+function auswertungDaten() {
+  const zr = A.zeitraum(AUSW.zr, AUSW.von, AUSW.bis);
+  return { zr, L: A.notizen(DATA.kunden, zr, AUSW.q) };
+}
+function renderAuswertung() {
+  const { zr, L } = auswertungDaten(), gruppen = A.nachKunde(L);
+  const zahl = a => L.filter(n => n.art === a).length;
+  const worte = A.stichworte(L);
+  return `<div class="listhead"><div><h2>Auswertung der Notizen</h2><p class="muted">Nur geschäftliche Notizen, über alle Kunden. Private Notizen werden nicht ausgewertet.</p></div>
+   <div class="row"><button data-a="auswexport" ${L.length ? "" : "disabled"}>Als Excel speichern</button></div></div>
+   <div class="filters ausw"><label>Zeitraum<select id="azr">${A.ZEITRAEUME.map(([v, l]) => `<option value="${v}" ${AUSW.zr === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+   ${AUSW.zr === "frei" ? `<label>von<input type="date" id="avon" value="${esc(AUSW.von)}"></label><label>bis<input type="date" id="abis" value="${esc(AUSW.bis || today())}"></label>` : ""}
+   <label>Suchen (Wort, Kunde oder Ort)<input type="search" id="aq" value="${esc(AUSW.q)}" placeholder="z. B. Muster, Angebot, Kollektion"></label></div>
+   <p class="muted">${zr.von ? fmtD(zr.von) : "Anfang"} bis ${fmtD(zr.bis)}</p>
+   <div class="kacheln"><div><b>${zahl("Besuchsnotiz")}</b><span>Besuchsnotizen</span></div><div><b>${gruppen.length}</b><span>Kunden mit Notizen</span></div>
+   <div><b>${zahl("Bestellformular")}</b><span>Bestellformulare</span></div><div><b>${zahl("Beanstandung")}</b><span>Beanstandungen</span></div></div>
+   ${worte.length ? `<h4>Häufige Stichworte</h4><div class="worte">${worte.map(([w, n]) => `<button data-a="awort" data-w="${esc(w)}" class="${AUSW.q.toLowerCase() === w ? "an" : ""}">${esc(w)} <small>${n}</small></button>`).join("")}</div>` : ""}
+   ${L.length ? gruppen.map(([k, N]) => `<section class="ausk"><h4><button class="link" data-a="open" data-id="${esc(k.id)}">${esc(k.n1)}</button> <span class="muted">${esc(k.plz)} ${esc(k.ort)} · ${N.length} ${N.length === 1 ? "Notiz" : "Notizen"}</span></h4>
+     <ul class="notes">${N.map(n => `<li><time>${fmtD(n.d)}${n.art !== "Besuchsnotiz" ? " · " + n.art : ""}</time>${esc(n.t)}</li>`).join("")}</ul></section>`).join("")
+    : `<p class="muted">Keine Notizen in diesem Zeitraum${AUSW.q ? " zu „" + esc(AUSW.q) + "“" : ""}.</p>`}`;
+}
+function auswertungExport() {
+  const { zr, L } = auswertungDaten();
+  const rows = L.map(n => ({ "Datum": fmtD(n.d), "Kd Nr.": vorlaeufig(n.k.id) ? "" : n.k.id, "Kunde": n.k.n1, "PLZ": n.k.plz, "Ort": n.k.ort, "Art": n.art, "Notiz": n.t }));
+  const wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(rows, { header: ["Datum", "Kd Nr.", "Kunde", "PLZ", "Ort", "Art", "Notiz"] });
+  ws["!cols"] = [{ wch: 11 }, { wch: 9 }, { wch: 32 }, { wch: 7 }, { wch: 18 }, { wch: 15 }, { wch: 90 }];
+  XLSX.utils.book_append_sheet(wb, ws, "Notizen");
+  const name = `Notizen_Auswertung_${zr.von || "Anfang"}_bis_${zr.bis}.xlsx`;
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([XLSX.write(wb, { type: "array", bookType: "xlsx" })], { type: XLSX_TYP }));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  toast("Excel-Datei erstellt: " + name);
+}
+
 /* ---------- Einstellungen ---------- */
 function renderSettings() {
   const s = S();
@@ -633,8 +670,8 @@ function openCustomer(id) {
    <dt>Besuch</dt><dd>Letzter: ${fmtD(c.lv)} · Dauer ${P.dauer(c)} Min. · ${c.dHome != null ? Math.round(c.dHome) + " km ab Bremen" : "Lage unbekannt"}</dd>
    <dt>Termin</dt><dd>${tf ? `<b class="termin">${terminText(tf)}</b>${terminHinweis(c, tf.date, tf.time) ? `<br><span class="warn">${esc(terminHinweis(c, tf.date, tf.time))}</span>` : ""}<br>${wocheKnopf(tf.date, "link small")}` : "kein Termin vereinbart"}</dd></dl>
    ${c.planHold ? `<p class="warn">Wird nicht automatisch eingeplant. <button type="button" class="link small" data-a="unhold" data-id="${c.id}">Wieder einplanen</button></p>` : ""}
-   <h4>Notizen</h4>${c.notes.length ? `<ul class="notes">${c.notes.slice().reverse().map(n => `<li><time>${fmtD(n.d)}</time>${esc(n.t)}</li>`).join("")}</ul>` : `<p class="muted">Noch keine Notizen.</p>`}
-   <h4>Private Notizen</h4>${(c.pnotes || []).length ? `<ul class="notes privat">${c.pnotes.slice().reverse().map(n => `<li><time>${fmtD(n.d)}</time>${esc(n.t)}</li>`).join("")}</ul>` : `<p class="muted">Noch keine privaten Notizen.</p>`}
+   <h4>Notizen</h4>${notizListe(c, "notes") || `<p class="muted">Noch keine Notizen.</p>`}
+   <h4>Private Notizen</h4>${notizListe(c, "pnotes") || `<p class="muted">Noch keine privaten Notizen.</p>`}
    <div class="row wrap"><button class="pri" value="visit" data-id="${c.id}">Besuch erfassen</button><button value="edit" data-id="${c.id}">Bearbeiten</button><button value="bestwahl" data-id="${c.id}">Bestellformular</button><button value="bfform" data-id="${c.id}">Beanstandung</button>
    <button value="appt" data-id="${c.id}">${tf ? "Termin ändern" : "Termin vereinbaren"}</button>${tf ? `<button value="delappt" data-id="${c.id}" class="ghost">Termin absagen</button>` : ""}
    ${PL && dayOpts ? `<label class="inl">Zur Tour am <select id="addday">${dayOpts}</select></label><button value="addtour" data-id="${c.id}">hinzufügen</button>` : ""}</div>`);
@@ -770,6 +807,34 @@ function wocheMitNachtPlanen(d, nacht) {
 function zumTag(d) {
   const tag = [...document.querySelectorAll("article.day")][wochentag(d)];
   if (tag) tag.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+/* ---------- Notizen bearbeiten (geschäftlich = notes, privat = pnotes) ---------- */
+// Liste in der Kundenansicht, nach Datum (neueste zuerst); jede Notiz mit „Bearbeiten“ (Index = Stelle in der gespeicherten Liste)
+function notizListe(c, liste) {
+  const N = (roh(c.id) || c)[liste] || [];
+  if (!N.length) return "";
+  const sortiert = N.map((n, i) => ({ n, i })).sort((a, b) => (b.n.d || "").localeCompare(a.n.d || "") || b.i - a.i); // neueste zuerst
+  return `<ul class="notes${liste === "pnotes" ? " privat" : ""}">${sortiert.map(({ n, i }) =>
+    `<li><time>${fmtD(n.d)}<button class="link small nedit" value="notizedit" data-id="${esc(c.id)}" data-l="${liste}" data-i="${i}">Bearbeiten</button></time>${esc(n.t)}</li>`).join("")}</ul>`;
+}
+function notizDialog(id, liste, i) {
+  const k = roh(id), n = k && (k[liste] || [])[i]; if (!n) return;
+  dlg(`<header class="dh"><h3>Notiz bearbeiten – ${esc(k.n1)}</h3><button value="notizzurueck" data-id="${esc(id)}" class="ghost">Abbrechen</button></header>
+   <label>Datum<input type="date" id="nd" value="${esc(n.d)}"></label>
+   <label>Notiz<textarea id="nt" rows="6">${esc(n.t)}</textarea></label>
+   <label>Art<select id="nl"><option value="notes" ${liste === "notes" ? "selected" : ""}>Geschäftliche Notiz</option><option value="pnotes" ${liste === "pnotes" ? "selected" : ""}>Private Notiz</option></select></label>
+   <div class="row wrap"><button class="pri" value="notizsave" data-id="${esc(id)}" data-l="${liste}" data-i="${i}">Speichern</button>
+   <button value="notizdel" data-id="${esc(id)}" data-l="${liste}" data-i="${i}" class="ghost">Notiz löschen</button></div>`);
+}
+function notizSpeichern(id, liste, i, loeschen) {
+  const k = roh(id), N = k && (k[liste] || []), n = N && N[i]; if (!n) return;
+  const t = loeschen ? "" : $("#nt").value.trim(), d = loeschen ? n.d : ($("#nd").value || n.d), ziel = loeschen ? liste : $("#nl").value;
+  if (!t && !confirm("Diese Notiz wirklich löschen?")) { openCustomer(id); return; }
+  if (t && ziel === liste) N[i] = { d, t }; // an derselben Stelle ändern
+  else { N.splice(i, 1); if (t) k[ziel] = (k[ziel] || []).concat({ d, t }); }
+  if (t) k[ziel].sort((a, b) => (a.d || "").localeCompare(b.d || "")); // nach Datum geordnet (gleiches Datum: Reihenfolge bleibt)
+  geaendert(); openCustomer(id);
+  toast(!t ? "Notiz gelöscht" : ziel !== liste ? (ziel === "pnotes" ? "Als private Notiz gespeichert" : "Als geschäftliche Notiz gespeichert") : "Notiz gespeichert");
 }
 function visitDialog(id) {
   const c = byId(id);
@@ -922,6 +987,9 @@ function dlgAktion(v, btn) {
   if (v === "bfform") { beanstandungFormular(id).catch(fehlerZeigen); return; }
   if (v === "bfleeren") { entwurfWeg(); beanstandungFormular(id).catch(fehlerZeigen); return; }
   if (v === "bferstellen") { beanstandungErstellen(id).catch(fehlerZeigen); return; }
+  if (v === "notizedit") { notizDialog(id, btn.dataset.l, +btn.dataset.i); return; }
+  if (v === "notizsave" || v === "notizdel") { notizSpeichern(id, btn.dataset.l, +btn.dataset.i, v === "notizdel"); return; }
+  if (v === "notizzurueck") { openCustomer(id); return; }
   if (v === "visit") { visitDialog(id); return; }
   if (v === "edit") { editDialog(id); return; }
   if (v === "appt") { terminDialog(id); return; }
@@ -1170,6 +1238,8 @@ document.addEventListener("click", async e => {
     if (a === "spalteneu") spalteHinzufuegen();
     if (a === "woche") { if ($("#dlg").open) $("#dlg").close(); wocheAnsehen(b.dataset.datum); }
     if (a === "open") openCustomer(b.dataset.id);
+    if (a === "awort") { AUSW.q = AUSW.q.toLowerCase() === b.dataset.w ? "" : b.dataset.w; render(); }
+    if (a === "auswexport") auswertungExport();
     if (a === "visit") visitDialog(b.dataset.id);
     if (a === "new") editDialog(null);
     if (a === "fix") fixDialog(+b.dataset.d, b.dataset.id, b.dataset.time);
@@ -1187,11 +1257,14 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("input", e => {
   const t = e.target;
+  if (t.id === "aq") { AUSW.q = t.value; const p = t.selectionStart; render(); const q = $("#aq"); q.focus(); q.setSelectionRange(p, p); }
   if (t.id === "q") { FILTER.q = t.value; const p = t.selectionStart; render(); const q = $("#q"); q.focus(); q.setSelectionRange(p, p); }
 });
 document.addEventListener("change", async e => {
   const t = e.target;
   if (t.id === "fabc") { FILTER.abc = t.value; render(); }
+  if (t.id === "azr") { AUSW.zr = t.value; render(); }
+  if (t.id === "avon" || t.id === "abis") { AUSW[t.id === "avon" ? "von" : "bis"] = t.value; render(); }
   if (t.id === "fmerkmal") { FILTER.merkmal = t.value; render(); }
   if (t.id === "fdue") { FILTER.due = t.checked; render(); }
   if (t.id === "foh") { FILTER.ohneOh = t.checked; render(); }
