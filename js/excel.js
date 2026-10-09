@@ -9,7 +9,7 @@ const SPALTEN = [
   ["Telefon", "tel"], ["Mobil", "mob"], ["Telefon 2", "tel2"], ["Email", "mail"], ["Rabatt", "rab"], ["Preisgruppe", "pg"],
   ["Priorität (ABC)", "abc"], ["Ansprechpartner", "ap"], ["Position/Funktion", "pos"], ["Direktkontakt (Tel./Mobil)", "dk"],
   ["Öffnungszeiten", "oh"], ["Besuchsdauer (Min.)", "vm"], ["Besuchsrhythmus (Wochen)", "rh"], ["Letzter Besuch", "lv"],
-  ["Aus Planung genommen", "hold"], ["Notizen", "notes"], ["Private Notizen", "pnotes"], ["Neu angelegt", "isNew"], ["Deaktiviert", "inactive"],
+  ["Aus Planung genommen", "hold"], ["Notizen", "notes"], ["Private Notizen", "pnotes"], ["Neu angelegt", "isNew"], ["Deaktiviert", "inactive"], ["Lage (Breite, Länge)", "geo"],
 ];
 const BEKANNT = new Set(SPALTEN.map(s => s[0]));
 // Eigene Spalten, die in der Kundenliste angelegt wurden (nicht vom Programm vorgegeben, keine Umsatz-Spalte)
@@ -95,7 +95,7 @@ export function leseStand(XLSX, daten) {
       tel: txt(k.tel), mob: txt(k.mob), tel2: txt(k.tel2), mail: txt(k.mail), rab: txt(k.rab), pg: txt(k.pg), ums,
       abc: (txt(k.abc).toUpperCase().match(/[ABC]/) || ["C"])[0], ap: txt(k.ap), pos: txt(k.pos), dk: txt(k.dk), oh: txt(k.oh),
       vm: zahl(k.vm) || null, rh: zahl(k.rh) || null, lv: datum(k.lv), hold: ja(k.hold), notes: notizenLesen(k.notes), pnotes: notizenLesen(k.pnotes),
-      isNew: ja(k.isNew), inactive: ja(k.inactive), extra,
+      isNew: ja(k.isNew), inactive: ja(k.inactive), geo: txt(k.geo), extra,
     };
     if (!c.n1 && !txt(k.id)) return; // leere Zeile
     kunden.push(c);
@@ -287,7 +287,7 @@ export function abgleichAnwenden(kunden, liste, vorschlag, auswahl) {
   const umsatzSetzen = (k, z) => { k.ums = { ...k.ums }; for (const j of liste.jahre) k.ums[j] = z.ums[j] || 0; };
   const erg = { umbenennen: [], umsatz: 0, neu: 0, deaktiviert: 0, reaktiviert: 0, stamm: 0 };
   if (auswahl.umsatz) for (const u of vorschlag.umsatz) { umsatzSetzen(K.get(u.id), L.get(u.id)); erg.umsatz++; }
-  if (auswahl.stamm) for (const s of vorschlag.stamm) { const k = K.get(s.id); for (const x of s.felder) k[x.f] = x.neu; erg.stamm++; }
+  if (auswahl.stamm) for (const s of vorschlag.stamm) { const k = K.get(s.id); for (const x of s.felder) { k[x.f] = x.neu; if (["str", "plz", "ort"].includes(x.f)) k.geo = ""; } erg.stamm++; } // neue Adresse: Lage neu bestimmen
   for (const r of vorschlag.reaktiv) if (auswahl.reaktiv.has(r.id)) { K.get(r.id).inactive = false; erg.reaktiviert++; }
   for (const f of vorschlag.fehlen) if (auswahl.fehlen.has(f.id)) { K.get(f.id).inactive = true; erg.deaktiviert++; }
   for (const v of vorschlag.vorlaeufig) if (auswahl.vorlaeufig.has(v.id)) {
@@ -297,7 +297,7 @@ export function abgleichAnwenden(kunden, liste, vorschlag, auswahl) {
   }
   for (const z of vorschlag.neu) if (auswahl.neu.has(z.id)) {
     kunden.push({ id: z.id, n1: z.n1 || "", n2: z.n2 || "", n3: z.n3 || "", plz: z.plz || "", ort: z.ort || "", str: z.str || "", tel: z.tel || "", mob: "", tel2: "", mail: z.mail || "",
-      rab: z.rab || "", pg: z.pg || "", ums: { ...z.ums }, abc: "C", ap: "", pos: "", dk: "", oh: "", vm: null, rh: null, lv: "", hold: false, notes: [], pnotes: [],
+      rab: z.rab || "", pg: z.pg || "", ums: { ...z.ums }, abc: "C", ap: "", pos: "", dk: "", oh: "", vm: null, rh: null, lv: "", hold: false, notes: [], pnotes: [], geo: "",
       isNew: false, inactive: false, extra: {} });
     erg.neu++;
   }

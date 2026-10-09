@@ -1,5 +1,5 @@
 // „Kunden in der Nähe“: die nächsten Kunden zum aktuellen Standort, nur nach Entfernung sortiert (ohne Umsatz).
-// Der Standort bleibt auf dem Gerät. Die Lage der Kunden ist die Mitte ihres PLZ-Gebiets (wie in der Planung).
+// Der Standort bleibt auf dem Gerät. Lage der Kunden: aus der Adresse, sonst Mitte des PLZ-Gebiets (wie in der Planung).
 import { luftlinie, hhmm } from "./grundlagen.js";
 
 // kunden: Liste mit lat/lng (z. B. P.CUST); pos: { lat, lng }. Ergebnis: [{ c, km }] – die n nächsten, nächste zuerst

@@ -34,6 +34,13 @@ export function punkteErgaenzen(t, punkte) {
   if (!neu.length) return t;
   return umbauen(t, t.punkte.concat(neu));
 }
+// Genau diese Punkte (vorhandene Werte bleiben erhalten, nicht mehr gebrauchte fallen weg – z. B. PLZ-Mitten,
+// sobald die genaue Lage aus der Adresse bekannt ist; hält die Tabelle klein).
+export function punkteSetzen(t, punkte) {
+  const soll = [...new Set(punkte)];
+  if (soll.length === t.punkte.length && soll.every(p => t.index.has(p))) return t;
+  return umbauen(t, soll);
+}
 export function wert(t, a, b) {
   const i = t.index.get(a), j = t.index.get(b); if (i == null || j == null) return null;
   const n = t.punkte.length, k = t.km[i * n + j], m = t.min[i * n + j];
@@ -105,6 +112,11 @@ export async function berechnen(t, schluessel, { fortschritt = () => {}, fetchFn
     } catch (e) { return { tabelle: t, fertig, gesamt: anfragen.length, abbruch: "Keine Internetverbindung" }; }
     if (r.status === 401 || r.status === 403) return { tabelle: t, fertig, gesamt: anfragen.length, abbruch: "Schlüssel ungültig oder gesperrt" };
     if (r.status === 429) return { tabelle: t, fertig, gesamt: anfragen.length, abbruch: "Gratis-Grenze von OpenRouteService erreicht – später geht es weiter" };
+    // Ein Punkt liegt zu weit von einer Straße weg („routable point … coordinate N“): Punkt melden, die App nimmt dort die PLZ-Mitte
+    if (r.status === 400 || r.status === 404) {
+      const text = await r.text().catch(() => ""), m = text.match(/coordinate (\d+)/);
+      if (m && pts[+m[1]]) return { tabelle: t, fertig, gesamt: anfragen.length, abbruch: "Ein Ort ist für den Routenplaner nicht erreichbar", unerreichbar: t.punkte[a.quellen.concat(a.ziele)[+m[1]]] };
+    }
     if (!r.ok) return { tabelle: t, fertig, gesamt: anfragen.length, abbruch: "OpenRouteService antwortet nicht (Fehler " + r.status + ")" };
     const d = await r.json();
     a.quellen.forEach((qi, x) => a.ziele.forEach((zi, y) => {

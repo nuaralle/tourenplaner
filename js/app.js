@@ -10,6 +10,7 @@ import * as B from "./bestellung.js";
 import * as BF from "./beanstandung.js";
 import * as A from "./auswertung.js";
 import * as NH from "./naehe.js";
+import * as LG from "./lage.js";
 
 const $ = s => document.querySelector(s);
 const XLSX = window.XLSX;
@@ -23,6 +24,7 @@ let AUSW = { zr: "3m", von: "", bis: "", q: "" }; // Auswertung der Notizen
 let TAB = "plan", FILTER = { q: "", abc: "", due: false, merkmal: "", ohneOh: false, trend: false };
 let SPEICHER_OK = true, SYNC_LAEUFT = false, SYNC_FEHLER = "", KONFLIKT = null, syncTimer = null;
 let FZ = F.neueTabelle(), FZ_LAEUFT = "", FZ_MELDUNG = "";
+let LAGE_LAEUFT = "", LAGE_MELDUNG = "";
 const S = () => P.S;
 const PLAN = () => DATA && DATA.plan; // die gerade angezeigte Woche
 // Höchstens so viele kommende Wochen sind geplant (2026-10-08). Die 2. Woche wird nur auf Knopfdruck geplant.
@@ -95,6 +97,7 @@ function statusZeigen() {
     else t = SYNC_LAEUFT ? "Wird abgeglichen …" : DATA.driveOffen ? "Wird gespeichert …" : "In Google Drive gespeichert";
   }
   else { t = DATA.ungesichert ? "Änderungen noch nicht als Excel gesichert" : "Gespeichert"; warn = DATA.ungesichert; }
+  if (LAGE_LAEUFT) t += " · " + LAGE_LAEUFT;
   if (FZ_LAEUFT) t += " · " + FZ_LAEUFT;
   el.textContent = t; el.className = "sync" + (warn ? " dirty" : "");
   if (gb) gb.hidden = !knopf;
@@ -106,7 +109,7 @@ const FZ_KEY = "tourenplaner-fahrzeiten", FZ_DRIVE_KEY = "tourenplaner-fahrzeite
 function fzLadenLokal() { try { const s = localStorage.getItem(FZ_KEY); if (s) FZ = F.ausText(s); } catch (e) { FZ = F.neueTabelle(); } }
 function fzSpeichernLokal() { try { localStorage.setItem(FZ_KEY, F.alsText(FZ)); } catch (e) { /* zu groß o. ä. – dann nur im Speicher */ } }
 function fzAnschliessen() { P.setzeFahrtQuelle(FZ.punkte.length ? F.fahrtQuelle(FZ, +S().zuschlag || 0) : null); }
-// Alle Orte, für die Fahrzeiten gebraucht werden: Startadresse + Lage aller aktiven Kunden (PLZ-Mittelpunkte)
+// Alle Orte, für die Fahrzeiten gebraucht werden: Startadresse + Lage aller aktiven Kunden (aus der Adresse, sonst PLZ-Mitte)
 function benoetigtePunkte() { if (!P.startBekannt()) return []; return [F.punktKey(HOME)].concat(P.CUST.filter(c => c.lat != null && !c.out).map(F.punktKey)); }
 async function fzBerechnen(manuell) {
   if (!DATA || FZ_LAEUFT) return;
@@ -114,14 +117,49 @@ async function fzBerechnen(manuell) {
   if (!key) { if (manuell) toast("Bitte zuerst den OpenRouteService-Schlüssel eintragen"); return; }
   if (!P.startBekannt()) { if (manuell) toast("Bitte zuerst die Startadresse eintragen"); return; }
   aufbereiten();
-  FZ = F.punkteErgaenzen(FZ, benoetigtePunkte());
+  FZ = F.punkteSetzen(FZ, benoetigtePunkte()); // nicht mehr gebrauchte Orte (z. B. PLZ-Mitten) fallen weg
   if (!F.fehlendePaare(FZ)) { if (manuell) toast("Alle Fahrzeiten sind schon berechnet"); return; }
   FZ_LAEUFT = "Fahrzeiten werden berechnet …"; FZ_MELDUNG = ""; statusZeigen();
   const r = await F.berechnen(FZ, key, { fortschritt: (a, b) => { FZ_LAEUFT = `Fahrzeiten ${a} von ${b}`; statusZeigen(); } });
-  FZ = r.tabelle; fzSpeichernLokal(); FZ_LAEUFT = ""; FZ_MELDUNG = r.abbruch || "";
+  FZ = r.tabelle; fzSpeichernLokal(); FZ_LAEUFT = "";
+  if (r.unerreichbar) { // genaue Adresse liegt zu weit von einer Straße weg: dort die PLZ-Mitte nehmen und weiterrechnen
+    const betroffen = P.CUST.filter(c => c.exakt && F.punktKey(c) === r.unerreichbar).map(c => roh(c.id)).filter(Boolean);
+    if (betroffen.length) { betroffen.forEach(k => { k.geo = LG.PLZ_MITTE; }); persist(); aufbereiten(); return fzBerechnen(manuell); }
+  }
+  FZ_MELDUNG = r.abbruch || "";
   render(); toast(r.abbruch ? "Fahrzeiten: " + r.abbruch : "Echte Fahrzeiten sind jetzt da");
   if (!r.abbruch && driveBereit()) fzNachDrive().catch(e => console.warn(e));
 }
+/* ---------- Genaue Lage aus der Adresse (nur Straße, PLZ, Ort gehen an OpenRouteService) ---------- */
+// Der große erste Durchlauf nur auf Knopfdruck (Einstellungen); danach automatisch für neue oder geänderte Kunden
+// (höchstens LAGE_AUTO_MAX auf einmal), damit PC und iPhone nicht gleichzeitig alles abfragen.
+const LAGE_AUTO_MAX = 25;
+async function lageBestimmen(manuell) {
+  if (!DATA || LAGE_LAEUFT) return false;
+  const key = (DATA.einst.orsKey || "").trim(), offen = DATA.kunden.filter(LG.brauchtLage).length;
+  if (!offen) { if (manuell) toast("Alle Kunden haben schon eine Lage"); return false; }
+  if (!key) { if (manuell) toast("Bitte zuerst den OpenRouteService-Schlüssel eintragen"); return false; }
+  if (!manuell && offen > LAGE_AUTO_MAX) return false;
+  LAGE_LAEUFT = "Lage wird bestimmt …"; LAGE_MELDUNG = ""; statusZeigen(); if (TAB === "set") render();
+  const r = await LG.bestimmen(DATA.kunden, key, {
+    plzMitte: plz => PLZ[plz] ? { lat: PLZ[plz][0], lng: PLZ[plz][1] } : null,
+    fortschritt: (a, b) => { LAGE_LAEUFT = `Lage ${a} von ${b}`; statusZeigen(); },
+    zwischendurch: () => persist(),
+  });
+  LAGE_LAEUFT = ""; LAGE_MELDUNG = r.abbruch || "";
+  if (r.fertig) geaendert(); else render();
+  if (manuell || r.abbruch) toast(r.abbruch ? "Lage: " + r.abbruch : `Genaue Lage für ${r.fertig} Kunden bestimmt – jetzt werden die Fahrzeiten neu berechnet`);
+  return r.fertig > 0;
+}
+function lageStatusText() {
+  const A = DATA.kunden.filter(k => !k.inactive);
+  const genau = A.filter(k => LG.geoPunkt(k.geo)).length, mitte = A.filter(k => k.geo === LG.PLZ_MITTE).length, offen = A.filter(LG.brauchtLage).length;
+  if (LAGE_LAEUFT) return LAGE_LAEUFT;
+  return `Genaue Lage aus der Adresse: ${genau} von ${A.length} Kunden${mitte ? `, ${mitte} nur PLZ-Mitte (Adresse nicht sicher gefunden)` : ""}${offen ? `, ${offen} noch offen` : ""}.`
+    + (LAGE_MELDUNG ? " Hinweis: " + LAGE_MELDUNG : "");
+}
+async function lageUndFahrzeiten(manuell) { await lageBestimmen(manuell).catch(e => console.warn(e)); await fzBerechnen(false); }
+
 async function fzNachDrive() {
   const info = await G.dateiInfo(G.FAHRZEIT_DATEI);
   const res = await G.dateiSpeichern(G.FAHRZEIT_DATEI, F.alsText(FZ), "application/json", info && info.id);
@@ -569,12 +607,15 @@ function renderSettings() {
    ${f("depart", "Abfahrt", "time")}${f("latest", "Späteste Rückkehr Tagestour", "time")}${f("latestOv", "Späteste Rückkehr Übernachtungstour (Tag 2)", "time")}
    ${f("lastVisitDay1", "Letzter Besuchsbeginn vor Hotelnacht", "time")}${f("hotelStart", "Abfahrt vom Hotel", "time")}
    ${f("ersterMaxKm", "Erster Besuch höchstens … km von zu Hause (0 = aus)", "number", 'min="0" step="5"')}${f("maxVisits", "Höchstens Besuche pro Tag")}${f("visitMin", "Dauer pro Besuch (Min.)")}<p class="muted">Eigene Dauer je Kunde: Kunden › Kunde öffnen › Bearbeiten.</p></fieldset>
-  <fieldset><legend>Echte Fahrzeiten (OpenRouteService)</legend>
+  <fieldset><legend>Echte Fahrzeiten und genaue Lage (OpenRouteService)</legend>
    <label>Persönlicher Schlüssel (kostenlos von openrouteservice.org)<input type="password" data-s="orsKey" value="${esc(s.orsKey || "")}" autocomplete="off" spellcheck="false"></label>
    ${f("zuschlag", "Zuschlag auf die Fahrzeit für Verkehr (%)")}
    <p class="muted">${fzStatusText()}</p>
    <button data-a="fzrechnen" ${FZ_LAEUFT || !s.orsKey ? "disabled" : ""}>Fehlende Fahrzeiten jetzt berechnen</button>
-   <p class="muted">Gesendet werden nur Koordinaten (Mitte der PLZ), keine Namen. Gratis-Tarif: die App macht höchstens ${F.GRENZE_TAG} Anfragen pro Tag (heute: ${F.zaehlerLesen()}), danach geht es am nächsten Tag weiter – es entstehen keine Kosten.</p></fieldset>
+   <p class="muted">Für die Fahrzeiten werden nur Koordinaten gesendet, keine Namen. Gratis-Tarif: die App macht höchstens ${F.GRENZE_TAG} Anfragen pro Tag (heute: ${F.zaehlerLesen()}), danach geht es am nächsten Tag weiter – es entstehen keine Kosten.</p>
+   <p class="muted">${lageStatusText()}</p>
+   <button data-a="lagerechnen" ${LAGE_LAEUFT || FZ_LAEUFT || !s.orsKey || !DATA.kunden.some(LG.brauchtLage) ? "disabled" : ""}>Genaue Lage jetzt bestimmen</button>
+   <p class="muted">Dafür werden nur Straße, PLZ und Ort gesendet – kein Firmenname. Höchstens ${LG.GRENZE_TAG} Abfragen pro Tag (heute: ${LG.zaehlerLesen()}). Danach werden die Fahrzeiten einmal neu berechnet. Neue oder geänderte Adressen werden automatisch nachgetragen.</p></fieldset>
   <fieldset><legend>Schätzung (wenn keine echte Fahrzeit da ist)</legend>
    ${f("roadFactor", "Umwegfaktor zur Luftlinie", "number", 'step="0.05"')}${f("speed", "Durchschnittstempo (km/h)")}</fieldset>
   <fieldset><legend>Google (Drive und Kalender)</legend>
@@ -624,7 +665,7 @@ function umsatzAuswahl() {
 }
 function fzStatusText() {
   if (FZ_LAEUFT) return FZ_LAEUFT;
-  const n = F.punkteErgaenzen(FZ, benoetigtePunkte()); const fehl = F.fehlendePaare(n), ges = n.punkte.length ** 2;
+  const n = F.punkteSetzen(FZ, benoetigtePunkte()); const fehl = F.fehlendePaare(n), ges = n.punkte.length ** 2;
   if (!S().orsKey) return "Noch kein Schlüssel eingetragen – bis dahin wird geschätzt.";
   return (fehl === 0 ? `Alle Fahrzeiten zwischen ${n.punkte.length} Orten sind berechnet.` : `${Math.round((ges - fehl) / ges * 100)} % der Fahrzeiten berechnet.`) + (FZ_MELDUNG ? " Hinweis: " + FZ_MELDUNG : "");
 }
@@ -669,7 +710,7 @@ function openCustomer(id) {
    <dt>Ansprechpartner</dt><dd>${esc(c.ap || "–")}${c.pos ? " (" + esc(c.pos) + ")" : ""}${c.dk ? " · " + telLink(c.dk) : ""}</dd>
    <dt>Öffnungszeiten</dt><dd>${esc(c.oh || "unbekannt")}${c.oh && !c.ohp.known ? `<br><span class="warn">Kann vom Programm nicht gelesen werden – geplant wird mit Mo–Fr 8–18 Uhr. Bitte z. B. so schreiben: Mo-Fr 9-12 und 14:30-18 Uhr</span>` : ""}</dd>
    <dt>Umsatz</dt><dd>${Object.keys(c.ums || {}).sort().reverse().map(j => j + ": " + eur(c.ums[j])).join(" · ") || "–"}</dd>${trendLang(c)}${Object.entries(c.extra || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
-   <dt>Besuch</dt><dd>Letzter: ${fmtD(c.lv)} · Dauer ${P.dauer(c)} Min. · ${c.dHome != null ? Math.round(c.dHome) + " km ab Bremen" : "Lage unbekannt"}</dd>
+   <dt>Besuch</dt><dd>Letzter: ${fmtD(c.lv)} · Dauer ${P.dauer(c)} Min. · ${c.dHome != null ? Math.round(c.dHome) + " km ab Bremen" : "Lage unbekannt"}${c.lat != null ? " · Lage " + (c.exakt ? "aus der Adresse" : "nur PLZ-Mitte") : ""}</dd>
    <dt>Termin</dt><dd>${tf ? `<b class="termin">${terminText(tf)}</b>${terminHinweis(c, tf.date, tf.time) ? `<br><span class="warn">${esc(terminHinweis(c, tf.date, tf.time))}</span>` : ""}<br>${wocheKnopf(tf.date, "link small")}` : "kein Termin vereinbart"}</dd></dl>
    ${c.planHold ? `<p class="warn">Wird nicht automatisch eingeplant. <button type="button" class="link small" data-a="unhold" data-id="${c.id}">Wieder einplanen</button></p>` : ""}
    <h4>Notizen</h4>${notizListe(c, "notes") || `<p class="muted">Noch keine Notizen.</p>`}
@@ -1035,9 +1076,10 @@ function dlgAktion(v, btn) {
     // eigene Spalten: Häkchen -> "ja" bzw. leer, Text wie eingegeben (leere Felder werden nicht gespeichert)
     const extra = {};
     eigene().forEach((s, i) => { const el = $("#e-x" + i); if (!el) return; const v = istHaekchen(s) ? (el.checked ? "ja" : "") : el.value.trim(); if (v) extra[s] = v; });
-    if (id) { const k = roh(id); Object.assign(k, f); k.extra = { ...Object.fromEntries(Object.entries(k.extra || {}).filter(([s]) => !eigene().includes(s))), ...extra }; if (lv) k.lv = lv; if (kd) kundeUmbenennen(id, kd); }
+    if (id) { const k = roh(id); if (LG.adresseGeaendert(k, f)) k.geo = ""; Object.assign(k, f); k.extra = { ...Object.fromEntries(Object.entries(k.extra || {}).filter(([s]) => !eigene().includes(s))), ...extra }; if (lv) k.lv = lv; if (kd) kundeUmbenennen(id, kd); }
     else DATA.kunden.push(Object.assign({ id: kd || "N" + Date.now().toString(36), n3: "", rab: "", pg: "", ums: {}, extra, notes: [], hold: false, isNew: true, inactive: false, lv: lv || "" }, f));
     geaendert(); toast(PLZ[f.plz] ? "Kunde gespeichert" : "Gespeichert – PLZ unbekannt, Kunde wird nicht eingeplant");
+    if (DATA.kunden.some(LG.brauchtLage)) lageUndFahrzeiten(false); // Lage der (neuen) Adresse bestimmen
   }
   if (v === "deact") { roh(id).inactive = true; geaendert(); toast("Kunde deaktiviert"); }
 }
@@ -1264,11 +1306,11 @@ function naeheListe() {
   const L = NH.naechste(P.CUST, NAEHE.pos, 20);
   if (!L.length) return `<p class="muted">Keine Kunden mit bekannter Lage.</p>`;
   const uhr = new Date(NAEHE.zeit).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  return `<p class="muted">Standort von ${uhr} Uhr${NAEHE.genau > 1000 ? ` (ungenau, ca. ${NH.kmText(NAEHE.genau / 1000)})` : ""}. Entfernung in Luftlinie bis zur Mitte des PLZ-Gebiets – also ungefähr.</p>
+  return `<p class="muted">Standort von ${uhr} Uhr${NAEHE.genau > 1000 ? ` (ungenau, ca. ${NH.kmText(NAEHE.genau / 1000)})` : ""}. Entfernung in Luftlinie${L.some(x => !x.c.exakt) ? "; „ca.“ = Lage nur aus der PLZ bekannt" : ""}.</p>
    <ul class="naehe">${L.map(({ c, km }) => {
     const o = NH.jetztOffen(c);
     const offen = !o ? "" : o.termin ? "nach Vereinbarung" : o.offen ? `<span class="auf">geöffnet bis ${o.bis}</span>` : `<span class="zu">geschlossen${o.ab ? " · öffnet " + o.ab : ""}</span>`;
-    return `<li><b class="km">${NH.kmText(km)}</b><div><button class="link" data-a="open" data-id="${esc(c.id)}">${esc(c.n1)}</button>
+    return `<li><b class="km">${c.exakt ? "" : "ca. "}${NH.kmText(km)}</b><div><button class="link" data-a="open" data-id="${esc(c.id)}">${esc(c.n1)}</button>
      <div class="sub">${esc([c.str, (c.plz + " " + c.ort).trim()].filter(Boolean).join(", "))}</div>
      <div class="sub">${[navLink(c, "Navi"), c.tel ? telLink(c.tel) : "", c.mob ? "Mobil " + telLink(c.mob) : "", offen].filter(Boolean).join(" · ")}</div></div></li>`;
   }).join("")}</ul>`;
@@ -1316,6 +1358,7 @@ document.addEventListener("click", async e => {
     if (a === "rm") removeDialog(+b.dataset.d, b.dataset.id);
     if (a === "unhold") { roh(b.dataset.id).hold = false; $("#dlg").close(); geaendert(); toast("Wird wieder eingeplant"); }
     if (a === "fzrechnen") await fzBerechnen(true);
+    if (a === "lagerechnen") await lageUndFahrzeiten(true);
     if (a === "gverbinden") G.anmelden(false);
     if (a === "gtrennen") { G.abmelden(); render(); statusZeigen(); toast("Verbindung zu Google getrennt"); }
   } catch (err) { console.error(err); toast("Fehler: " + err.message); }
@@ -1384,11 +1427,11 @@ function stillAnmelden() {
     if (G.angemeldet()) { if (rueck && rueck.ok) { await G.kontoLaden().catch(() => {}); toast("Mit Google verbunden"); } abgleichen(); }
     else if (!rueck && stillAnmelden()) return;
   }
-  if (DATA) fzBerechnen(false);
+  if (DATA) lageUndFahrzeiten(false);
   vorlagenPruefen().then(vorlagenAusOrdner).then(() => { if (TAB === "set") render(); return vorlagenNachDrive(); }).catch(e => console.warn(e));
   setInterval(() => { if (document.visibilityState === "visible") abgleichen(); }, 5 * 60e3);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { if (!stillAnmelden()) abgleichen(); } });
-  addEventListener("online", () => { statusZeigen(); abgleichen(); if (DATA) fzBerechnen(false); });
+  addEventListener("online", () => { statusZeigen(); abgleichen(); if (DATA) lageUndFahrzeiten(false); });
   addEventListener("offline", statusZeigen);
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
