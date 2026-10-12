@@ -1,5 +1,5 @@
 // Oberfläche des Tourenplaners.
-import { HOME, WD, WDS, DEFAULTS, tmin, hhmm, iso, parseISO, addDays, fmtD, eur, today, esc } from "./grundlagen.js";
+import { HOME, WD, WDS, DEFAULTS, tmin, hhmm, iso, parseISO, addDays, fmtD, eur, today, esc, luftlinie } from "./grundlagen.js";
 import * as P from "./planung.js";
 import { PLZ } from "./plz.js";
 import { leseStand, schreibeStand, kundenNormalisieren, umsatzJahre, umsatzJahr, eigeneSpalten, spalteBekannt, STANDARD_REIHENFOLGE, kundenlisteLesen, abgleichVorschlag, abgleichAnwenden, stammName } from "./excel.js";
@@ -10,6 +10,7 @@ import * as B from "./bestellung.js";
 import * as BF from "./beanstandung.js";
 import * as A from "./auswertung.js";
 import * as NH from "./naehe.js";
+import * as NK_ from "./neukunden.js";
 
 const $ = s => document.querySelector(s);
 const XLSX = window.XLSX;
@@ -184,7 +185,7 @@ async function nachDrive(id) {
 }
 async function vonDriveLaden(meta) {
   const st = leseStand(XLSX, await G.dateiLaden(meta.id));
-  DATA = { kunden: st.kunden, einst: st.einst, plan: st.plan, plaene: st.plaene, sicherung: st.sicherung, kalLoeschen: st.kalLoeschen, spalten: st.spalten, spaltenArten: st.spaltenArten, termine: st.termine, quelle: "Google Drive › " + G.ORDNER + " › " + G.STAND_DATEI,
+  DATA = { kunden: st.kunden, einst: st.einst, plan: st.plan, plaene: st.plaene, sicherung: st.sicherung, neukundenAus: st.neukundenAus, kalLoeschen: st.kalLoeschen, spalten: st.spalten, spaltenArten: st.spaltenArten, termine: st.termine, quelle: "Google Drive › " + G.ORDNER + " › " + G.STAND_DATEI,
     drive: { id: meta.id, modifiedTime: meta.modifiedTime }, driveOffen: false, ungesichert: false, aenderung: 0 };
   persist(false); render(); toast("Aktueller Stand aus Google Drive geladen");
 }
@@ -499,7 +500,7 @@ function renderList() {
   if (FILTER.trend) L.sort((a, b) => (b.trendAlt - b.trendHoch) - (a.trendAlt - a.trendHoch)); // größter Verlust in Euro zuerst
   else L.sort((a, b) => b.urg - a.urg);
   return `<div class="listhead"><div><h2>Kunden</h2><p class="muted">${P.CUST.length} aktiv · ${P.MERKMAL() ? "Planung: nur " + esc(P.MERKMAL()) + " · " : ""}${P.LAENGST() ? "am längsten nicht besuchte zuerst" : "sortiert nach Umsatz " + S().umsatzJahr}</p></div>
-   <div class="row"><button data-a="naehe">In der Nähe</button><button class="pri" data-a="new">Kunde hinzufügen</button><button data-a="export">Als Excel sichern</button></div></div>
+   <div class="row"><button data-a="naehe">In der Nähe</button><button data-a="neukunden">Neue Kunden finden</button><button class="pri" data-a="new">Kunde hinzufügen</button><button data-a="export">Als Excel sichern</button></div></div>
    <div class="filters"><input type="search" id="q" placeholder="Name, Ort oder PLZ suchen" value="${esc(FILTER.q)}" aria-label="Kunden suchen">
    <select id="fabc" aria-label="Priorität"><option value="">Alle Prioritäten</option>${["A", "B", "C"].map(x => `<option ${FILTER.abc === x ? "selected" : ""}>${x}</option>`).join("")}</select>
    ${haekchenSpalten().length ? `<select id="fmerkmal" aria-label="Merkmal"><option value="">Alle Kunden</option>${haekchenSpalten().map(s => `<option value="${esc(s)}" ${FILTER.merkmal === s ? "selected" : ""}>nur ${esc(s)}</option>`).join("")}</select>` : ""}
@@ -635,7 +636,7 @@ function standUebernehmen(name, daten) {
   if (DATA && DATA.ungesichert && !confirm("Auf diesem Gerät gibt es Änderungen, die noch nicht als Excel gesichert sind. Trotzdem den Stand aus „" + name + "“ laden?")) return;
   Sp.sichern();
   const drive = DATA && DATA.drive;
-  DATA = { kunden: st.kunden, einst: st.einst, plan: st.plan, plaene: st.plaene, sicherung: st.sicherung, kalLoeschen: st.kalLoeschen, spalten: st.spalten, spaltenArten: st.spaltenArten, termine: st.termine, quelle: name + " (geladen " + fmtD(today()) + ")", ungesichert: false, drive, driveOffen: true, aenderung: 1 };
+  DATA = { kunden: st.kunden, einst: st.einst, plan: st.plan, plaene: st.plaene, sicherung: st.sicherung, neukundenAus: st.neukundenAus, kalLoeschen: st.kalLoeschen, spalten: st.spalten, spaltenArten: st.spaltenArten, termine: st.termine, quelle: name + " (geladen " + fmtD(today()) + ")", ungesichert: false, drive, driveOffen: true, aenderung: 1 };
   planeAbgleich();
   persist(false); TAB = "plan"; render();
   toast(st.kunden.length + " Kunden geladen");
@@ -925,8 +926,9 @@ function kundeUmbenennen(alt, neu) {
   const T = TERMINE(); if (T[alt]) { T[neu] = T[alt]; delete T[alt]; T[neu].cal = ""; } // Kalendereintrag mit neuer Kd.-Nr. aktualisieren
   for (const PL of PLAENE()) { PL.days.forEach(D => { D.stops = D.stops.map(x => x === alt ? neu : x); }); PL.excluded = (PL.excluded || []).map(x => x === alt ? neu : x); }
 }
-function editDialog(id) {
-  const c = id ? roh(id) : { abc: "C" };
+// vorlage: Vorbelegung für einen neuen Kunden (z. B. aus „Neue Kunden finden“)
+function editDialog(id, vorlage = null) {
+  const c = id ? roh(id) : { abc: "C", ...(vorlage || {}) };
   const kdFeld = !id || vorlaeufig(id)
     ? `<label>Kd.-Nr. (falls schon vergeben)<input id="e-kd" value="" inputmode="numeric" placeholder="noch keine"></label>`
     : `<label>Kd.-Nr.<input value="${esc(id)}" disabled></label>`;
@@ -941,7 +943,7 @@ function editDialog(id) {
    ${eigene().length ? `<div class="grid2">${eigene().map((s, i) => { const v = (c.extra || {})[s];
      return istHaekchen(s) ? `<label class="chk"><input type="checkbox" id="e-x${i}" ${istJa(v) ? "checked" : ""}> ${esc(s)}</label>` : `<label>${esc(s)}<input id="e-x${i}" value="${esc(v ?? "")}"></label>`; }).join("")}</div>` : ""}
    <p id="e-msg" class="warn" aria-live="polite"></p>
-   <div class="row wrap"><button class="pri" value="saveedit" data-id="${id || ""}">Speichern</button>${id ? `<button value="deact" data-id="${id}" class="ghost" formnovalidate>Kunde deaktivieren</button>` : ""}</div>`);
+   <div class="row wrap"><button class="pri" value="saveedit" data-id="${id || ""}"${vorlage ? " data-nk=\"1\"" : ""}>Speichern</button>${id ? `<button value="deact" data-id="${id}" class="ghost" formnovalidate>Kunde deaktivieren</button>` : ""}</div>`);
 }
 
 /* ---------- Aktionen ---------- */
@@ -1028,7 +1030,7 @@ function dlgAktion(v, btn) {
     const g = k => ($("#e-" + k)?.value || "").trim();
     const f = { n1: g("n1"), n2: g("n2"), str: g("str"), plz: g("plz"), ort: g("ort"), tel: g("tel"), mob: g("mob"), tel2: g("tel2"), mail: g("mail"), ap: g("ap"), pos: g("pos"), dk: g("dk"), abc: g("abc"), oh: g("oh"), vm: +g("vm") || null };
     const lv = g("lv");
-    const kd = g("kd"), fehler = msg => { editDialog(id); setTimeout(() => { $("#e-msg").textContent = msg; }, 0); };
+    const kd = g("kd"), fehler = msg => { editDialog(id, btn.dataset.nk ? f : null); setTimeout(() => { $("#e-msg").textContent = msg; }, 0); };
     if (!f.n1 || !f.plz) { fehler("Firma und PLZ werden benötigt."); return; }
     if (kd && (vorlaeufig(kd) || /\s/.test(kd))) { fehler("Bitte die Kd.-Nr. ohne Leerzeichen eingeben."); return; }
     if (kd && DATA.kunden.some(k => k.id === kd)) { fehler("Die Kd.-Nr. " + kd + " gibt es schon bei „" + DATA.kunden.find(k => k.id === kd).n1 + "“."); return; }
@@ -1038,6 +1040,7 @@ function dlgAktion(v, btn) {
     if (id) { const k = roh(id); Object.assign(k, f); k.extra = { ...Object.fromEntries(Object.entries(k.extra || {}).filter(([s]) => !eigene().includes(s))), ...extra }; if (lv) k.lv = lv; if (kd) kundeUmbenennen(id, kd); }
     else DATA.kunden.push(Object.assign({ id: kd || "N" + Date.now().toString(36), n3: "", rab: "", pg: "", ums: {}, extra, notes: [], hold: false, isNew: true, inactive: false, lv: lv || "" }, f));
     geaendert(); toast(PLZ[f.plz] ? "Kunde gespeichert" : "Gespeichert – PLZ unbekannt, Kunde wird nicht eingeplant");
+    if (btn.dataset.nk && NK.L) neuKundenDialog(); // zurück zu den Funden
   }
   if (v === "deact") { roh(id).inactive = true; geaendert(); toast("Kunde deaktiviert"); }
 }
@@ -1274,6 +1277,105 @@ function naeheListe() {
   }).join("")}</ul>`;
 }
 
+/* ---------- Neue Kunden finden (OpenStreetMap, kostenlos; an OSM gehen nur Branchen und Gebiet, der Abgleich bleibt auf dem Gerät) ---------- */
+let NK = { branchen: NK_.BRANCHEN.filter(b => b.standard).map(b => b.k), wo: "plz", plz: "", km: 30, q: "", laeuft: false, fehler: "", L: null, ort: null };
+const nkAus = () => (DATA.neukundenAus = DATA.neukundenAus || []);
+function neuKundenDialog() {
+  dlg(`<header class="dh"><h3>Neue Kunden finden</h3><button value="x" class="ghost">Schließen</button></header>
+   <fieldset><legend>Branchen</legend><div class="grid2">${NK_.BRANCHEN.map(b => `<label class="chk"><input type="checkbox" data-nkb="${b.k}" ${NK.branchen.includes(b.k) ? "checked" : ""}> ${esc(b.t)}</label>`).join("")}</div></fieldset>
+   <fieldset><legend>Wo suchen?</legend>
+   <label class="chk"><input type="radio" name="nkwo" value="plz" ${NK.wo === "plz" ? "checked" : ""}> Umkreis um eine PLZ</label>
+   <div class="row"><input id="nkplz" inputmode="numeric" maxlength="5" placeholder="PLZ, z. B. 26122" value="${esc(NK.plz)}" aria-label="PLZ" style="max-width:10rem">
+   <select id="nkkm" aria-label="Umkreis">${[10, 20, 30, 50, 80].map(k => `<option value="${k}" ${NK.km === k ? "selected" : ""}>${k} km</option>`).join("")}</select></div>
+   <label class="chk"><input type="radio" name="nkwo" value="gebiet" ${NK.wo === "gebiet" ? "checked" : ""}> ganzes Gebiet (Bremen, Hamburg, Schleswig-Holstein, Niedersachsen – dauert länger)</label></fieldset>
+   <div class="row"><button type="button" class="pri" data-a="nksuchen">Suchen</button></div>
+   <p class="muted">Quelle: OpenStreetMap – kostenlos, ohne Anmeldung. Gesendet werden nur Branchen und Gebiet, keine Kundendaten; der Abgleich mit Ihrer Kundenliste läuft auf diesem Gerät. Nicht jeder Betrieb ist in OpenStreetMap eingetragen.</p>
+   <div id="nkinhalt">${nkListe()}</div>`);
+  $("#nkplz").oninput = () => { const r = $("#dlg [name=nkwo][value=plz]"); if (r) r.checked = true; };
+}
+async function neuKundenSuchen() {
+  if (NK.laeuft) return;
+  const d = $("#dlg"); NK.branchen = [...d.querySelectorAll("[data-nkb]")].filter(x => x.checked).map(x => x.dataset.nkb);
+  NK.wo = (d.querySelector("[name=nkwo]:checked") || {}).value || "plz"; NK.plz = $("#nkplz").value.trim(); NK.km = +$("#nkkm").value;
+  if (!NK.branchen.length) { NK.fehler = "Bitte mindestens eine Branche ankreuzen."; nkZeigen(); return; }
+  let ort = null;
+  if (NK.wo === "plz") { const p = PLZ[NK.plz]; if (!p) { NK.fehler = "Diese PLZ ist unbekannt – bitte eine 5-stellige PLZ aus dem Gebiet eingeben."; nkZeigen(); return; } ort = { lat: p[0], lng: p[1], km: NK.km }; }
+  if (!navigator.onLine) { NK.fehler = "Keine Internetverbindung."; nkZeigen(); return; }
+  NK.laeuft = "Suche läuft …"; NK.fehler = ""; NK.abbruch = false; nkZeigen();
+  try {
+    const holen = async (url, body) => {
+      const ab = new AbortController(), t = setTimeout(() => ab.abort(), 120e3);
+      try {
+        const r = await fetch(url, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: ab.signal });
+        return { status: r.status, json: r.ok ? await r.json() : null };
+      } catch (e) { throw new Error(e.name === "AbortError" ? "Zeitüberschreitung" : "keine Verbindung"); } finally { clearTimeout(t); }
+    };
+    const fortschritt = (i, n, anz) => { NK.laeuft = n > 1 ? `Suche läuft … Teil ${i} von ${n} (bisher ${anz} Treffer, insgesamt einige Minuten)` : "Suche läuft …"; nkZeigen(); };
+    const erg = await NK_.suchen(NK.branchen, ort ? [NK_.rechteckUm(ort)] : NK_.KACHELN,
+      { holen, fortschritt, warten: ms => new Promise(r => setTimeout(r, ms)), abbruch: () => NK.abbruch || !$("#nkinhalt") });
+    if (!erg.L.length && erg.fehlend) throw new Error("OpenStreetMap ist gerade nicht erreichbar oder überlastet (" + erg.fehler + "). Bitte in ein paar Minuten noch einmal versuchen.");
+    let L = NK_.plzSchaetzen(erg.L, PLZ);
+    if (ort) L = L.map(b => ({ ...b, km: luftlinie(ort, b) })).filter(b => b.km <= ort.km + 1);
+    NK.L = L; NK.ort = ort; NK.q = "";
+    if (NK.abbruch || !$("#nkinhalt")) NK.fehler = "Suche abgebrochen – die Liste zeigt nur die Teile bis dahin.";
+    else if (erg.fehlend) NK.fehler = `${erg.fehlend} von ${ort ? 1 : NK_.KACHELN.length} Teilen des Gebiets konnten nicht abgefragt werden (Dienst überlastet) – die Liste ist unvollständig, bitte später noch einmal suchen.`;
+  } catch (e) { console.warn(e); NK.fehler = e.message; }
+  NK.laeuft = false; nkZeigen();
+  const z = $("#nkinhalt"); if (z) z.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+// Abgleich jedes Mal neu (z. B. nach „Als Kunde übernehmen“). Lage der Kunden = Mitte der PLZ, auch bei deaktivierten
+function nkAbgleich() {
+  const kunden = DATA.kunden.map(k => { const p = PLZ[k.plz]; return p ? { ...k, lat: p[0], lng: p[1] } : k; }), aus = new Set(nkAus());
+  return NK.L.map(b => ({ b, m: aus.has(b.osm) ? { art: "aus" } : NK_.abgleich(b, kunden) }));
+}
+const nkBranche = b => b.branchen.map(k => NK_.BRANCHEN.find(x => x.k === k).t).join(", ");
+function nkListe() {
+  if (NK.laeuft) return `<p class="muted">${esc(NK.laeuft)}</p><div class="row"><button type="button" data-a="nkstopp">Suche abbrechen</button></div>`;
+  const f = NK.fehler ? `<p class="warn">${esc(NK.fehler)}</p>` : "";
+  if (!NK.L) return f;
+  const A = nkAbgleich(), gr = a => A.filter(x => x.m.art === a), q = NK.q.toLowerCase();
+  const sortiert = L => L.filter(({ b }) => !q || (b.n1 + " " + b.ort + " " + b.plz).toLowerCase().includes(q))
+    .sort((x, y) => NK.ort ? x.b.km - y.b.km : String(x.b.plz).localeCompare(String(y.b.plz)) || x.b.n1.localeCompare(y.b.n1));
+  const zeile = ({ b, m }) => {
+    const kd = m.k ? `<button type="button" class="link" data-a="open" data-id="${esc(m.k.id)}">${esc(m.k.n1)}</button> (${esc(m.k.plz)} ${esc(m.k.ort)})${m.k.inactive ? " – deaktiviert" : ""}` : "";
+    const web = b.web ? `<a href="${esc(/^https?:/i.test(b.web) ? b.web : "https://" + b.web)}" target="_blank" rel="noopener">Webseite</a>` : "";
+    const knoepfe = m.art === "kunde" ? "" : m.art === "aus" ? `<button type="button" data-a="nkein" data-osm="${esc(b.osm)}">Wieder einblenden</button>`
+      : `<button type="button" class="pri" data-a="nkneu" data-osm="${esc(b.osm)}">Als Kunde übernehmen</button><button type="button" data-a="nkaus" data-osm="${esc(b.osm)}">Ausblenden</button>`;
+    return `<li><b class="km">${NK.ort ? NH.kmText(b.km) : esc(b.plz)}</b><div><b>${esc(b.n1)}</b><div class="sub">${esc(nkBranche(b))}</div>
+     <div class="sub">${b.str ? esc([b.str, (b.plz + " " + b.ort).trim()].join(", ")) : "Adresse fehlt in OpenStreetMap" + (b.plz ? ` · PLZ ${b.plzUngefaehr ? "ungefähr " : ""}${esc(b.plz)} ${esc(b.ort)}` : "")}</div>
+     <div class="sub">${[b.str ? navLink(b, "Navi") : nkNaviLage(b), b.tel ? telLink(b.tel) : "", web].filter(Boolean).join(" · ")}</div>
+     ${m.art === "vielleicht" ? `<div class="sub zu">Vielleicht schon Kunde (${esc(m.grund)}): ${kd}</div>` : m.art === "kunde" ? `<div class="sub">Kunde: ${kd} – ${esc(m.grund)}</div>` : ""}
+     ${knoepfe ? `<div class="row">${knoepfe}</div>` : ""}</div></li>`;
+  };
+  const block = (L, max = 300) => { const S = sortiert(L); return `<ul class="naehe">${S.slice(0, max).map(zeile).join("")}</ul>${S.length > max ? `<p class="muted">${S.length - max} weitere – bitte in den Funden suchen, einen kleineren Umkreis wählen oder „Als Excel speichern“.</p>` : ""}`; };
+  const neu = gr("neu"), vl = gr("vielleicht"), kd = gr("kunde"), aus = gr("aus");
+  return `${f}<p><b>${NK.L.length} Betriebe gefunden:</b> ${neu.length} neu · ${vl.length} vielleicht schon Kunde · ${kd.length} schon Kunde${aus.length ? " · " + aus.length + " ausgeblendet" : ""}</p>
+   <div class="row"><input type="search" id="nkq" placeholder="In den Funden suchen (Name, Ort, PLZ)" value="${esc(NK.q)}" aria-label="In den Funden suchen">${neu.length + vl.length ? `<button type="button" data-a="nkexport">Als Excel speichern</button>` : ""}</div>
+   <h4>Neu (${neu.length})</h4>${neu.length ? block(neu) : `<p class="muted">Keine neuen Betriebe.</p>`}
+   ${vl.length ? `<h4>Vielleicht schon Kunde (${vl.length}) – bitte prüfen</h4>${block(vl)}` : ""}
+   ${kd.length ? `<details><summary>Schon Kunde (${kd.length})</summary>${block(kd)}</details>` : ""}
+   ${aus.length ? `<details><summary>Ausgeblendet (${aus.length})</summary>${block(aus)}</details>` : ""}`;
+}
+// Navi ohne Adresse: zur Lage aus OpenStreetMap
+const nkNaviLage = b => `<a href="${IOS ? `https://maps.apple.com/?daddr=${b.lat},${b.lng}&dirflg=d` : `https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}&travelmode=driving`}" target="_blank" rel="noopener">Navi</a>`;
+function nkZeigen() { const z = $("#nkinhalt"); if (z) z.innerHTML = nkListe(); }
+function nkUebernehmen(osm) {
+  const b = (NK.L || []).find(x => x.osm === osm); if (!b) return;
+  editDialog(null, { n1: b.n1, str: b.str, plz: b.plz, ort: b.ort, tel: b.tel, mob: b.mob, mail: b.mail, oh: NK_.ohText(b.oh) });
+}
+function nkExport() {
+  const A = nkAbgleich().filter(x => x.m.art === "neu" || x.m.art === "vielleicht");
+  const rows = A.map(({ b, m }) => ({ "Firma": b.n1, "Branche": nkBranche(b), "Straße": b.str, "PLZ": b.plzUngefaehr ? b.plz + " (ungefähr)" : b.plz, "Ort": b.ort, "Telefon": b.tel, "E-Mail": b.mail, "Webseite": b.web, "Öffnungszeiten": NK_.ohText(b.oh),
+    "Abgleich": m.art === "neu" ? "neu" : "vielleicht schon Kunde: " + (vorlaeufig(m.k.id) ? "" : m.k.id + " ") + m.k.n1 + " (" + m.grund + ")" }));
+  const wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(rows, { header: ["Firma", "Branche", "Straße", "PLZ", "Ort", "Telefon", "E-Mail", "Webseite", "Öffnungszeiten", "Abgleich"] });
+  ws["!cols"] = [{ wch: 34 }, { wch: 24 }, { wch: 26 }, { wch: 7 }, { wch: 18 }, { wch: 18 }, { wch: 26 }, { wch: 30 }, { wch: 30 }, { wch: 50 }];
+  XLSX.utils.book_append_sheet(wb, ws, "Neue Kunden");
+  const name = `Neue_Kunden_${NK.ort ? NK.plz + "_" + NK.km + "km" : "Gebiet"}_${today()}.xlsx`;
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([XLSX.write(wb, { type: "array", bookType: "xlsx" })], { type: XLSX_TYP }));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  toast("Excel-Datei erstellt: " + name);
+}
+
 function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), Math.max(2600, t.length * 55)); }
 
 /* ---------- Start ---------- */
@@ -1303,6 +1405,12 @@ document.addEventListener("click", async e => {
     if (a === "woche") { if ($("#dlg").open) $("#dlg").close(); wocheAnsehen(b.dataset.datum); }
     if (a === "open") openCustomer(b.dataset.id);
     if (a === "naehe") naeheDialog();
+    if (a === "neukunden") neuKundenDialog();
+    if (a === "nksuchen") await neuKundenSuchen();
+    if (a === "nkneu") nkUebernehmen(b.dataset.osm);
+    if (a === "nkaus" || a === "nkein") { const L = nkAus(), o = b.dataset.osm; DATA.neukundenAus = a === "nkaus" ? L.concat(L.includes(o) ? [] : [o]) : L.filter(x => x !== o); persist(); nkZeigen(); }
+    if (a === "nkexport") nkExport();
+    if (a === "nkstopp") { NK.abbruch = true; NK.laeuft = "Suche wird abgebrochen …"; nkZeigen(); }
     if (a === "awort") { AUSW.q = AUSW.q.toLowerCase() === b.dataset.w ? "" : b.dataset.w; render(); }
     if (a === "auswexport") auswertungExport();
     if (a === "visit") visitDialog(b.dataset.id);
@@ -1322,6 +1430,7 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("input", e => {
   const t = e.target;
+  if (t.id === "nkq") { NK.q = t.value; const p = t.selectionStart; nkZeigen(); const q = $("#nkq"); q.focus(); q.setSelectionRange(p, p); }
   if (t.id === "aq") { AUSW.q = t.value; const p = t.selectionStart; render(); const q = $("#aq"); q.focus(); q.setSelectionRange(p, p); }
   if (t.id === "q") { FILTER.q = t.value; const p = t.selectionStart; render(); const q = $("#q"); q.focus(); q.setSelectionRange(p, p); }
 });

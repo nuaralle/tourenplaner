@@ -1,9 +1,9 @@
 // Zwischenspeicher, damit die App auch ohne Netz startet.
 // Programmdateien: zuerst aus dem Netz (immer aktuell), bei fehlendem Netz aus dem Zwischenspeicher.
-// Anfragen an Google und OpenRouteService werden NICHT zwischengespeichert.
-const CACHE = "tourenplaner-v11";
+// Anfragen an Google, OpenRouteService und OpenStreetMap werden NICHT zwischengespeichert.
+const CACHE = "tourenplaner-v12";
 const DATEIEN = ["./", "index.html", "style.css", "manifest.webmanifest", "icon-180.png", "icon-192.png", "vendor/xlsx.full.min.js", "vendor/pdf-lib.min.js",
-  "js/app.js", "js/planung.js", "js/grundlagen.js", "js/excel.js", "js/plz.js", "js/speicher.js", "js/fahrzeiten.js", "js/google.js", "js/konfig.js", "js/bestellung.js", "js/beanstandung.js", "js/auswertung.js", "js/naehe.js"];
+  "js/app.js", "js/planung.js", "js/grundlagen.js", "js/excel.js", "js/plz.js", "js/speicher.js", "js/fahrzeiten.js", "js/google.js", "js/konfig.js", "js/bestellung.js", "js/beanstandung.js", "js/auswertung.js", "js/naehe.js", "js/neukunden.js"];
 
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(DATEIEN)).then(() => self.skipWaiting())); });
 // Beim Aktualisieren nur eigene alte Zwischenspeicher löschen: unter derselben Adresse (github.io) liegen auch andere Apps (z. B. KISY).
