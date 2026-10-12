@@ -1,7 +1,6 @@
 // Planungslogik (aus dem Prototyp übernommen, ohne Oberfläche – dadurch auch automatisch testbar).
 import { HOME, DEFAULTS, tmin, hhmm, iso, parseISO, addDays, today, luftlinie, parseOH, hotelOrt } from "./grundlagen.js";
 import { PLZ } from "./plz.js";
-import { geoPunkt } from "./lage.js";
 
 export let S = { ...DEFAULTS };
 export let CUST = [];  // aufbereitete Kunden (mit Lage, Fälligkeit usw.)
@@ -65,9 +64,7 @@ export function rebuild(kunden) {
   for (const k of kunden) {
     if (k.inactive) continue;
     const c = Object.assign({}, k, { notes: k.notes || [], planHold: !!k.hold });
-    const g = geoPunkt(c.geo); // genaue Lage aus der Adresse, sonst Mitte des PLZ-Gebiets
-    if (g) { c.lat = g.lat; c.lng = g.lng; c.exakt = true; }
-    else if (c.lat == null && c.plz && PLZ[c.plz]) { c.lat = PLZ[c.plz][0]; c.lng = PLZ[c.plz][1]; }
+    if (c.lat == null && c.plz && PLZ[c.plz]) { c.lat = PLZ[c.plz][0]; c.lng = PLZ[c.plz][1]; }
     c.ohp = parseOH(c.oh);
     c.dHome = c.lat != null && startBekannt() ? fahrt(HOME, c).km : null; // echte Fahrstrecke, sobald bekannt
     c.since = c.lv ? Math.round((parseISO(today()) - parseISO(c.lv)) / 864e5) : null; // Tage seit dem letzten Besuch
