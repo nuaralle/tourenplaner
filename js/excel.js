@@ -126,7 +126,7 @@ export function leseStand(XLSX, daten) {
   if (wb.Sheets["Termine"]) for (const z of XLSX.utils.sheet_to_json(wb.Sheets["Termine"], { defval: "" })) {
     const id = txt(z["Kd Nr."]), d = datum(z.Datum), t = uhrzeit(z.Uhrzeit);
     if (!id || !d || !t || !kunden.some(k => k.id === id)) continue;
-    termine[id] = { date: d, time: t }; if (txt(z["Kalender-Eintrag"])) { termine[id].ev = txt(z["Kalender-Eintrag"]); termine[id].cal = "ok"; }
+    termine[id] = { date: d, time: t }; if (uhrzeit(z["Tag bis"])) termine[id].bis = uhrzeit(z["Tag bis"]); if (txt(z["Kalender-Eintrag"])) { termine[id].ev = txt(z["Kalender-Eintrag"]); termine[id].cal = "ok"; }
   }
   for (const p of plaene) { for (const id in p.fixed) if (!termine[id]) termine[id] = p.fixed[id]; p.fixed = termine; }
   let kalLoeschen = [], spaltenArten = {}, sicherung = "", neukundenAus = [];
@@ -233,8 +233,8 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(wp, { header: ["Datum", "Art", "Reihenfolge", "Kd Nr.", "Kunde", "Fixtermin", "Hotel", "Kalender-Eintrag"] }), "Wochenplan");
   const kdN = new Map(kunden.map(k => [k.id, k]));
   const tr = Object.entries(termine).sort((a, b) => (a[1].date + a[1].time).localeCompare(b[1].date + b[1].time))
-    .map(([id, f]) => { const k = kdN.get(id) || {}; return { "Datum": f.date, "Uhrzeit": f.time, "Kd Nr.": id, "Kunde": (k.n1 || "?") + " (" + (k.ort || "") + ")", "Kalender-Eintrag": f.ev || "" }; });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr, { header: ["Datum", "Uhrzeit", "Kd Nr.", "Kunde", "Kalender-Eintrag"] }), "Termine");
+    .map(([id, f]) => { const k = kdN.get(id) || {}; return { "Datum": f.date, "Uhrzeit": f.time, "Kd Nr.": id, "Kunde": (k.n1 || "?") + " (" + (k.ort || "") + ")", "Kalender-Eintrag": f.ev || "", "Tag bis": f.bis || "" }; });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr, { header: ["Datum", "Uhrzeit", "Kd Nr.", "Kunde", "Kalender-Eintrag", "Tag bis"] }), "Termine");
   // Internes Blatt: noch zu löschende Kalendertermine (z. B. wenn ein Termin offline gelöst wurde)
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ "Schlüssel": "kalLoeschen", "Wert": JSON.stringify(kalLoeschen || []) }, { "Schlüssel": "uebernachtung", "Wert": JSON.stringify(Object.fromEntries(wochen.map(p => [p.week, p.uebernachtung || "auto"]))) }, { "Schlüssel": "spaltenArten", "Wert": JSON.stringify(spaltenArten || {}) },
     { "Schlüssel": "sicherung", "Wert": sicherung || "" },

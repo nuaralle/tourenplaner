@@ -371,12 +371,14 @@ export function tauschPruefung(plan, nurTag) {
 // Start/Ende und späteste Rückkehr eines Tages
 export function dayEnds(D) {
   if (D.type === "ov1") return { start: HOME, sMin: tmin(S.depart), end: null, limit: null };
-  if (D.type === "ov2") return { start: D.hotel, sMin: tmin(S.hotelStart), end: HOME, limit: tmin(S.latestOv) };
-  return { start: HOME, sMin: tmin(S.depart), end: HOME, limit: tmin(S.latest) };
+  if (D.type === "ov2") return { start: D.hotel, sMin: tmin(S.hotelStart), end: HOME, limit: Math.max(tmin(S.latestOv), wunschBis(D)) };
+  return { start: HOME, sMin: tmin(S.depart), end: HOME, limit: Math.max(tmin(S.latest), wunschBis(D)) };
 }
+// Ausnahme „Termin mit Wunschzeit“: an diesem Tag darf die Rückkehr später sein (z. B. 18:30 Uhr)
+export function wunschBis(D) { return Math.max(0, ...D.stops.filter(id => FIX[id] && FIX[id].day === D.day && FIX[id].bis).map(id => tmin(FIX[id].bis))); }
 export function setFix(fixed, mondayISO) {
   FIX = {}; SPAETER = new Set(); const mon = parseISO(mondayISO);
-  for (const id in (fixed || {})) { const f = fixed[id]; const di = Math.round((parseISO(f.date) - mon) / 864e5); if (di >= 0 && di <= 3) FIX[id] = { day: di, time: f.time }; else if (di > 3) SPAETER.add(id); }
+  for (const id in (fixed || {})) { const f = fixed[id]; const di = Math.round((parseISO(f.date) - mon) / 864e5); if (di >= 0 && di <= 3) FIX[id] = { day: di, time: f.time, bis: f.bis || null }; else if (di > 3) SPAETER.add(id); }
 }
 export const istFix = (id, day) => !!(FIX[id] && FIX[id].day === day);
 const hasFix = D => D.stops.some(id => FIX[id] && FIX[id].day === D.day);
@@ -460,6 +462,20 @@ export function findReplacement(plan, D, removed) {
   for (const c of cands.slice(0, 40)) { const r = tryInsert(D, c.id); if (r) return { seq: r, c }; }
   return null;
 }
+// Prüfung für Alternativ-Kunden: normal alle Regeln; ist der Tag schon zu lang oder knapp (von Hand ergänzt),
+// darf der Tausch den Tag nicht verschlechtern (Rückkehr höchstens 10 Min. später, keine neuen Öffnungszeit-/Terminprobleme)
+function alternativeOhneVerschlechterung(D) {
+  if (feasible(D, D.stops)) return seq => feasible(D, seq);
+  const e = dayEnds(D), basis = simulate(e.start, e.sMin, D.stops, D.day, e.end);
+  const letzter = x => x.legs.length ? x.legs[x.legs.length - 1].begin : 0;
+  return seq => {
+    const x = simulate(e.start, e.sMin, seq, D.day, e.end);
+    if (!x.ok && basis.ok) return false; if (x.lateFix && !basis.lateFix) return false;
+    if (x.legs.filter(L => L.warn && !L.fixed).length > basis.legs.filter(L => L.warn && !L.fixed).length) return false;
+    if (D.type === "ov1") return letzter(x) <= Math.max(tmin(S.lastVisitDay1), letzter(basis) + 10);
+    return x.end <= Math.max(e.limit, basis.end + 10);
+  };
+}
 // Zu jedem geplanten Besuch einen Alternativ-Kunden in der Nähe, der an dieselbe Stelle der Tour passt.
 // Reihenfolge der Suche: eigener Alternativ-Kunde -> mit anderem Besuch geteilt -> auch Kunden, die sonst nicht dran wären.
 export function alternativen(plan) {
@@ -468,6 +484,8 @@ export function alternativen(plan) {
   const stufen = [{ teilen: false, weit: false }, { teilen: true, weit: false }, { teilen: false, weit: true }, { teilen: true, weit: true }];
   for (const D of plan.days) {
     if (D.type === "home") continue;
+    // Ist der Tag schon zu voll (z. B. nach „Alternative davor/danach“), reicht es, wenn der Tausch ihn nicht schlechter macht
+    const passt = alternativeOhneVerschlechterung(D);
     D.stops.forEach((id, i) => {
       const s = byId(id); if (!s) return;
       for (const st of stufen) {
@@ -476,7 +494,7 @@ export function alternativen(plan) {
           const cands = alle.filter(c => km(s, c) <= radius).sort((a, b) => b.urg / (1 + km(s, b) / 10) - a.urg / (1 + km(s, a) / 10));
           for (const c of cands.slice(0, 25)) {
             const seq = D.stops.slice(); seq[i] = c.id;
-            if (feasible(D, seq)) { res[id] = { id: c.id, km: km(s, c), geteilt: vergeben.has(c.id), weit: st.weit }; vergeben.add(c.id); return; }
+            if (passt(seq)) { res[id] = { id: c.id, km: km(s, c), geteilt: vergeben.has(c.id), weit: st.weit }; vergeben.add(c.id); return; }
           }
         }
       }

@@ -105,7 +105,8 @@ dialog::backdrop{background:rgba(10,20,24,.5)}
 /* Ergänzungen Version 2 */
 .alt{grid-column:2;font-size:.85rem;color:var(--muted);background:var(--surf2);border-radius:6px;padding:.35rem .6rem;margin-top:.3rem;display:flex;flex-wrap:wrap;gap:.2rem .6rem;align-items:center}
 .alt b{color:var(--ink);font-weight:600}
-.alt button{min-height:32px;padding:.2rem .6rem;font-size:.85rem;margin-left:auto}
+.alt .altk{display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem;width:100%}
+.alt button{min-height:34px;padding:.2rem .3rem;font-size:.76rem;font-weight:700;line-height:1.15}
 .start{background:var(--surf);border-radius:10px;padding:1.5rem;max-width:40rem;display:flex;flex-direction:column;gap:.8rem}
 .start input[type=file]{padding:.6rem;background:var(--surf2)}
 .row.wrap{flex-wrap:wrap}

@@ -1,5 +1,5 @@
 // Oberfläche des Tourenplaners.
-import { HOME, WD, WDS, DEFAULTS, tmin, hhmm, iso, parseISO, addDays, fmtD, eur, today, esc, luftlinie } from "./grundlagen.js";
+import { HOME, WD, WDS, DEFAULTS, tmin, hhmm, iso, parseISO, addDays, fmtD, eur, today, esc, luftlinie, hotelOrt } from "./grundlagen.js";
 import * as P from "./planung.js";
 import { PLZ } from "./plz.js";
 import { leseStand, schreibeStand, kundenNormalisieren, umsatzJahre, umsatzJahr, eigeneSpalten, spalteBekannt, STANDARD_REIHENFOLGE, kundenlisteLesen, abgleichVorschlag, abgleichAnwenden, stammName } from "./excel.js";
@@ -29,6 +29,7 @@ const PLAN = () => DATA && DATA.plan; // die gerade angezeigte Woche
 // Höchstens so viele kommende Wochen sind geplant (2026-10-08). Die 2. Woche wird nur auf Knopfdruck geplant.
 // Termine gehen trotzdem für jedes Datum; die Woche wird um sie herum geplant, sobald sie geplant wird.
 const MAX_WOCHEN = 2;
+const WUNSCH_BIS = "18:30"; // Termin mit Wunschzeit: an diesem Tag darf die Rückkehr bis hierhin gehen
 // Alle geplanten Wochen (kommende und die letzten 4 Wochen zum Abschließen der Tage; oben angezeigt werden nur die kommenden).
 // DATA.plan ist immer eine davon (nach dem Laden aus dem Gerätespeicher wird sie wieder verknüpft).
 function PLAENE() {
@@ -386,10 +387,10 @@ function renderPlan() {
       const c = byId(L.id); const done = c.lv && c.lv >= D.date;
       const a = alt[c.id], ac = a && byId(a.id);
       html += `<li class="leg"><span class="drv">${L.geschaetzt && nGesch < legs.length ? "≈ " : ""}${Math.round(L.km)} km · ${Math.round(L.min)} Min.</span></li>
-       <li class="stop${done ? " done" : ""}${L.fixed ? " isfix" : ""}"><div class="t"><span class="nr" style="background:var(--dc)">${nr}</span>${hhmm(L.begin)}${L.fixed ? `<span class="fixb">fix</span>` : ""}</div><div class="who"><button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> ${abcTag(c)}
+       <li class="stop${done ? " done" : ""}${L.fixed ? " isfix" : ""}"><div class="t"><span class="nr" style="background:var(--dc)">${nr}</span>${hhmm(L.begin)}${L.fixed ? `<span class="fixb">${TERMINE()[c.id]?.bis ? "Wunschzeit" : "fix"}</span>` : ""}</div><div class="who"><button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> ${abcTag(c)}
        <div class="sub">${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)} · ${navLink(c, "Navi")}${c.tel ? " · " + telLink(c.tel) : ""}${c.mob ? " · Mobil " + telLink(c.mob) : ""} · ${L.dur} Min. · ${dueText(c)}${!c.oh ? " · Öffnungszeiten unbekannt" : c.ohp.known ? "" : " · Öffnungszeiten nicht lesbar"}</div>${L.warn ? `<div class="warn">${esc(L.warn)}</div>` : ""}${L.fixed ? kalHinweis(c.id) : ""}</div>
-       <div class="acts">${done ? `<span class="ok">besucht</span>` : D.abgeschlossen ? `<span class="warn">nicht angetroffen</span>` : `${L.fixed ? `<button data-a="unfix" data-d="${di}" data-id="${c.id}">Fix lösen</button>` : `<button class="fixbtn" data-a="fix" data-d="${di}" data-id="${c.id}" data-time="${hhmm(L.begin)}">Termin fix</button>`}<button data-a="visit" data-id="${c.id}">Besuch erfassen</button>`}<button class="ghost" data-a="rm" data-d="${di}" data-id="${c.id}" aria-label="${esc(c.n1)} aus der Tour nehmen">Entfernen</button></div>
-       ${done ? "" : ac ? `<div class="alt"><span>Falls keine Zeit: <b>${esc(ac.n1)}</b> · ${esc(ac.ort)}, ${a.km < 1 ? "gleicher Ort" : Math.round(a.km) + " km entfernt"}${ac.tel ? " · " + telLink(ac.tel) : ""}${a.weit ? " · " + (P.MERKMAL() ? "kein " + esc(P.MERKMAL()) : "wenig Umsatz") : ""}</span><button data-a="alt" data-d="${di}" data-id="${c.id}" data-alt="${ac.id}">Alternative nehmen</button></div>`
+       <div class="acts">${done ? `<span class="ok">besucht</span>` : D.abgeschlossen ? `<span class="warn">nicht angetroffen</span>` : `${L.fixed ? `<button data-a="unfix" data-d="${di}" data-id="${c.id}">Fix lösen</button>` : `<button class="fixbtn" data-a="fix" data-d="${di}" data-id="${c.id}" data-time="${hhmm(L.begin)}">Termin fix</button><button class="fixbtn" data-a="wunsch" data-d="${di}" data-id="${c.id}">Wunschzeit</button>`}<button data-a="visit" data-id="${c.id}">Besuch erfassen</button>`}<button class="ghost" data-a="rm" data-d="${di}" data-id="${c.id}" aria-label="${esc(c.n1)} aus der Tour nehmen">Entfernen</button></div>
+       ${done ? "" : ac ? `<div class="alt"><span>Falls keine Zeit: <b>${esc(ac.n1)}</b> · ${esc(ac.ort)}, ${a.km < 1 ? "gleicher Ort" : Math.round(a.km) + " km entfernt"}${ac.tel ? " · " + telLink(ac.tel) : ""}${a.weit ? " · " + (P.MERKMAL() ? "kein " + esc(P.MERKMAL()) : "wenig Umsatz") : ""}</span><span class="altk"><button data-a="alt" data-d="${di}" data-id="${c.id}" data-alt="${ac.id}">Alternative nehmen</button><button data-a="altdavor" data-d="${di}" data-id="${c.id}" data-alt="${ac.id}">Alternative davor</button><button data-a="altdanach" data-d="${di}" data-id="${c.id}" data-alt="${ac.id}">Alternative danach</button></span></div>`
         : `<div class="alt">Keine Alternative in der Nähe gefunden</div>`}</li>`;
     });
     if (D.type === "ov1") {
@@ -398,7 +399,7 @@ function renderPlan() {
     }
     else html += `<li class="leg"><span class="drv">${Math.round(sim.backKm)} km · ${Math.round(sim.backMin)} Min.</span></li><li class="node">ca. ${hhmm(sim.end)} zurück in Bremen</li></ol>`;
     const lim = P.dayEnds(D).limit; const over = lim != null && sim.end > lim;
-    html += `<footer><span>${Math.round(sim.km)} km · ${D.stops.length} Besuche · ${nFix} fix</span>${over ? `<span class="warn">später als ${hhmm(lim)} zurück</span>` : ""}${D.date <= today() && D.stops.some(id => !besucht(id, D.date)) && !D.abgeschlossen ? `<button class="pri" data-a="tagab" data-week="${PL.week}" data-d="${di}">Tag abschließen</button>` : ""}${D.date >= today() && D.stops.length >= 3 ? `<button class="ghost" data-a="feinschliff" data-d="${di}">Reihenfolge verbessern</button>` : ""}<a href="${gmaps(D)}" target="_blank" rel="noopener">Route in Google Maps</a></footer></article>`;
+    html += `<footer><span>${Math.round(sim.km)} km · ${D.stops.length} Besuche · ${nFix} fix</span>${over ? `<span class="warn">später als ${hhmm(lim)} zurück</span>` : P.wunschBis(D) && D.type !== "ov1" ? `<span class="muted">Ausnahme Wunschzeit: Rückkehr bis ${hhmm(P.wunschBis(D))} Uhr</span>` : ""}${D.date <= today() && D.stops.some(id => !besucht(id, D.date)) && !D.abgeschlossen ? `<button class="pri" data-a="tagab" data-week="${PL.week}" data-d="${di}">Tag abschließen</button>` : ""}${D.date >= today() && D.stops.length >= 3 ? `<button class="ghost" data-a="feinschliff" data-d="${di}">Reihenfolge verbessern</button>` : ""}<a href="${gmaps(D)}" target="_blank" rel="noopener">Route in Google Maps</a></footer></article>`;
   });
   return html + `</div>`;
 }
@@ -705,6 +706,22 @@ function alternativeNehmen(di, id, altId) {
   geaendert();
   toast((byId(altId) || {}).n1 + " statt " + (byId(id) || roh(id)).n1 + " eingeplant");
 }
+// Alternative zusätzlich einplanen, direkt vor oder nach dem Kunden – alle geplanten Kunden bleiben
+function alternativeDazu(di, id, altId, davor) {
+  const PL = PLAN(); const D = PL.days[di]; if (D.stops.includes(altId)) return;
+  PL.days.forEach((X, i) => { if (i !== di) X.stops = X.stops.filter(x => x !== altId); });
+  PL.excluded = (PL.excluded || []).filter(x => x !== altId);
+  const i = D.stops.indexOf(id); if (i < 0) return;
+  D.stops.splice(davor ? i : i + 1, 0, altId);
+  // Übernachtung Tag 1: Hotel im Ort des letzten Besuchs
+  if (D.type === "ov1" && D.stops[D.stops.length - 1] === altId) {
+    D.hotel = hotelOrt(byId(altId)); const D2 = PL.days.find(X => X.type === "ov2"); if (D2) D2.hotel = D.hotel;
+  }
+  aufbereiten(); geaendert();
+  const n = (byId(altId) || {}).n1, sim = P.simDay(D), lim = P.dayEnds(D).limit;
+  const knapp = !sim.ok || sim.lateFix || (lim != null && sim.end > lim);
+  toast(n + (davor ? " vor " : " nach ") + (byId(id) || {}).n1 + " eingeplant" + (knapp ? " – Tag wird knapp, bitte Zeiten prüfen" : D.stops.length > S().maxVisits ? " – mehr als " + S().maxVisits + " Besuche" : ""));
+}
 function fixDialog(di, id, t) {
   const c = byId(id), D = PLAN().days[di];
   dlg(`<header class="dh"><h3>Termin bei ${esc(c.n1)}</h3><button value="x" class="ghost">Abbrechen</button></header>
@@ -712,6 +729,16 @@ function fixDialog(di, id, t) {
    <label>Bestätigte Uhrzeit<input type="time" id="fxt" value="${esc(t)}" required></label>
    <p class="muted">Feste Termine bleiben beim Neuplanen erhalten. Die übrigen Besuche des Tages werden um sie herum geplant.</p>
    <div class="row"><button class="pri" value="savefix" data-id="${id}" data-d="${di}">Termin fix setzen</button></div>`);
+}
+// Termin mit Wunschzeit: beliebige Uhrzeit, alle Kunden des Tages bleiben, der Tag darf bis WUNSCH_BIS Uhr gehen
+function wunschDialog(di, id) {
+  const c = byId(id), D = PLAN().days[di], f = TERMINE()[id];
+  dlg(`<header class="dh"><h3>Wunschzeit bei ${esc(c.n1)}</h3><button value="x" class="ghost">Abbrechen</button></header>
+   <p>${WD[D.day]}, ${fmtD(D.date)}${c.tel ? " · " + telLink(c.tel) : ""}${c.mob ? " · Mobil " + telLink(c.mob) : ""}</p>
+   <label>Uhrzeit nach Wunsch des Kunden<input type="time" id="wzt" value="${f && f.date === D.date ? esc(f.time) : ""}" required></label>
+   <p class="muted">Der Termin wird fest eingetragen. Alle anderen Kunden dieses Tages bleiben, nur die Reihenfolge wird angepasst.
+   Ausnahme: An diesem Tag darf die Planung bis ${WUNSCH_BIS} Uhr gehen.</p>
+   <div class="row"><button class="pri" value="savewunsch" data-id="${id}" data-d="${di}">Wunschzeit speichern</button></div>`);
 }
 // Hinweise zu einem Termindatum (der Termin wird trotzdem gespeichert)
 function terminHinweis(c, d, t) {
@@ -1023,6 +1050,19 @@ function dlgAktion(v, btn) {
     if (tm) {
       const T = TERMINE(); const alt = T[id]; T[id] = { date: D.date, time: tm, ev: alt && alt.ev || null }; P.setFix(T, PL.week); P.resequence(D); geaendert();
       const s = P.simDay(D); toast(s.lateFix ? "Termin fix – Zeiten bitte prüfen" : "Termin fix: " + tm + " Uhr");
+    }
+    return;
+  }
+  if (v === "savewunsch") {
+    const di = +btn.dataset.d, D = PL.days[di], tm = $("#wzt").value;
+    if (tm) {
+      const T = TERMINE(); const alt = T[id]; T[id] = { date: D.date, time: tm, ev: alt && alt.ev || null, bis: WUNSCH_BIS };
+      PL.days.forEach((X, i) => { if (i !== di) X.stops = X.stops.filter(x => x !== id); }); if (!D.stops.includes(id)) D.stops.push(id);
+      P.setFix(T, PL.week); P.resequence(D); geaendert();
+      const s = P.simDay(D), lim = P.dayEnds(D).limit;
+      toast(s.lateFix ? "Wunschzeit " + tm + " Uhr – wird nicht pünktlich erreicht, bitte prüfen"
+        : lim != null && s.end > lim ? "Wunschzeit " + tm + " Uhr – Rückkehr ca. " + hhmm(s.end) + ", später als " + WUNSCH_BIS + " Uhr"
+        : "Wunschzeit: " + tm + " Uhr, alle Kunden bleiben");
     }
     return;
   }
@@ -1416,8 +1456,10 @@ document.addEventListener("click", async e => {
     if (a === "visit") visitDialog(b.dataset.id);
     if (a === "new") editDialog(null);
     if (a === "fix") fixDialog(+b.dataset.d, b.dataset.id, b.dataset.time);
+    if (a === "wunsch") wunschDialog(+b.dataset.d, b.dataset.id);
     if (a === "unfix") { fixWeg(b.dataset.id); geaendert(); toast("Termin wieder offen"); }
     if (a === "alt") alternativeNehmen(+b.dataset.d, b.dataset.id, b.dataset.alt);
+    if (a === "altdavor" || a === "altdanach") alternativeDazu(+b.dataset.d, b.dataset.id, b.dataset.alt, a === "altdavor");
     if (a === "export") await exportXlsx(false);
     if (a === "ordnerspeichern") await exportXlsx(true);
     if (a === "ordnerladen") { const r = await Sp.ausOrdnerLaden(); standUebernehmen(r.name, r.daten); }
