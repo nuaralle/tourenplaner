@@ -61,7 +61,7 @@ figcaption .dueI{width:8px;height:8px;border-radius:50%;background:var(--A);opac
 .stop{display:grid;grid-template-columns:3.2rem 1fr;gap:.2rem .5rem;padding:.55rem 0;border-top:1px solid var(--line)}
 .stop .t{font:700 1.05rem var(--disp);color:var(--dc)}
 .stop .sub{font-size:.85rem;color:var(--muted)}
-.stop .acts{grid-column:2;display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.25rem}.stop .acts button{min-height:34px;padding:.3rem .7rem;font-size:.88rem}
+.stop .acts{grid-column:2;display:flex;gap:.3rem;margin-top:.25rem}.stop .acts button{flex:1 1 0;min-width:0;text-align:center;hyphens:manual;min-height:34px;padding:.2rem .3rem;font-size:.76rem;font-weight:700;line-height:1.15}
 .stop.done .who{opacity:.65}
 .fixb{display:block;font:700 .7rem var(--disp);color:var(--accInk);background:var(--dc);border-radius:3px;text-align:center;margin-top:.15rem;padding:0 .2rem;width:fit-content}
 .stop.isfix{background:color-mix(in srgb,var(--dc) 7%,transparent)}
