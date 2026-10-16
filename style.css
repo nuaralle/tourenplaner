@@ -61,7 +61,7 @@ figcaption .dueI{width:8px;height:8px;border-radius:50%;background:var(--A);opac
 .stop{display:grid;grid-template-columns:3.2rem 1fr;gap:.2rem .5rem;padding:.55rem 0;border-top:1px solid var(--line)}
 .stop .t{font:700 1.05rem var(--disp);color:var(--dc)}
 .stop .sub{font-size:.85rem;color:var(--muted)}
-.stop .acts{grid-column:2;display:flex;gap:.3rem;margin-top:.25rem}.stop .acts button{flex:1 1 0;min-width:0;text-align:center;hyphens:manual;min-height:34px;padding:.2rem .3rem;font-size:.76rem;font-weight:700;line-height:1.15}
+.stop .acts{grid-column:2;display:flex;gap:.3rem;margin-top:.25rem}.stop .acts button{flex:1 1 0;min-width:0;text-align:center;hyphens:manual;min-height:44px;padding:.2rem .3rem;font-size:.82rem;font-weight:700;line-height:1.15}
 .stop.done .who{opacity:.65}
 .fixb{display:block;font:700 .7rem var(--disp);color:var(--accInk);background:var(--dc);border-radius:3px;text-align:center;margin-top:.15rem;padding:0 .2rem;width:fit-content}
 .stop.isfix{background:color-mix(in srgb,var(--dc) 7%,transparent)}
@@ -115,7 +115,7 @@ dialog::backdrop{background:rgba(10,20,24,.5)}
 .koll label.chk input{width:22px;height:22px;flex:none;margin:0;accent-color:var(--acc)}
 .koll .kdat{font-size:.85rem}
 .mk{display:inline-block;font:700 .7rem var(--disp);color:var(--acc);border:1px solid var(--acc);border-radius:3px;padding:0 .3rem;vertical-align:2px}
-.alt button{min-height:34px;padding:.2rem .3rem;font-size:.76rem;font-weight:700;line-height:1.15}
+.alt button{min-height:44px;padding:.2rem .3rem;font-size:.82rem;font-weight:700;line-height:1.15}
 .start{background:var(--surf);border-radius:10px;padding:1.5rem;max-width:40rem;display:flex;flex-direction:column;gap:.8rem}
 .start input[type=file]{padding:.6rem;background:var(--surf2)}
 .row.wrap{flex-wrap:wrap}
@@ -166,3 +166,38 @@ input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and
 .fotoknopf input{padding:.5rem;background:var(--surf)}
 .fotos{display:flex;flex-wrap:wrap;gap:.6rem}.fotos figure{margin:0;display:flex;flex-direction:column;gap:.25rem;width:110px}
 .fotos img{width:110px;height:110px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}.fotos button{min-height:30px;padding:.15rem .4rem;font-size:.82rem}
+/* Optik 2026-10-16: Symbole, Knöpfe für Navi/Anrufen, zugeklappte Bereiche, Reiter unten auf dem Handy */
+.ic{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.2em;flex:none}
+.pill{display:inline-flex;align-items:center;gap:.35rem;min-height:40px;padding:.3rem .85rem;border:1px solid var(--line);border-radius:20px;background:var(--surf);color:var(--ink);font-weight:600;font-size:.9rem;text-decoration:none}
+.pill .ic{color:var(--acc)}
+.kontakt{display:flex;flex-wrap:wrap;gap:.4rem;margin:.4rem 0 .1rem}
+.schnell{display:flex;flex-wrap:wrap;gap:.5rem}
+details>summary{list-style:none;cursor:pointer}details>summary::-webkit-details-marker{display:none}
+details>summary .ic{transition:transform .15s}details[open]>summary .ic{transform:rotate(90deg)}
+details.alt{display:block;padding:0}
+details.alt>summary{display:flex;align-items:center;gap:.4rem;min-height:40px;padding:.3rem .6rem}
+details.alt[open]>summary{color:var(--ink)}
+.altin{display:flex;flex-direction:column;padding:0 .6rem .5rem}
+div.alt{padding:.45rem .6rem}
+.tagsum{flex-basis:100%;font-size:.85rem;color:var(--muted)}
+.heutemk{font:700 .75rem var(--disp);background:var(--dc);color:var(--accInk);border-radius:3px;padding:.05rem .4rem}
+.day{scroll-margin-top:5rem}.day.heute{box-shadow:0 0 0 2px var(--dc)}
+.planknoepfe{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.heuteknopf{display:inline-flex;align-items:center;gap:.35rem}
+details.planen>summary,details.filterbox>summary{display:flex;align-items:center;gap:.35rem;font-weight:600;color:var(--acc);min-height:40px}
+details.planen[open]>.row{margin-top:.3rem}
+details.filterbox{margin:-.3rem 0 .8rem}details.filterbox[open]>.filters{margin-top:.3rem}
+.row label.inl{flex:0 0 auto;white-space:nowrap}
+.tabs .ic{display:none}
+@media (min-width:641px){details.planen>summary{display:none}}
+@media (max-width:640px){
+ .crow{grid-template-columns:auto minmax(0,1fr);align-items:start}.crow .cd{grid-column:2;text-align:left}
+ .top .in{flex-wrap:nowrap;gap:.6rem;padding:.4rem 1rem}
+ .top h1{font-size:1.15rem;white-space:nowrap}
+ .top .sync{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;width:auto;margin:0;display:grid;grid-template-columns:repeat(4,1fr);gap:.2rem;background:var(--ink);color:var(--bg);padding:.3rem .4rem calc(.3rem + env(safe-area-inset-bottom,0px));box-shadow:0 -1px 0 color-mix(in srgb,var(--bg) 18%,transparent)}
+ .tabs button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.1rem;padding:.3rem .1rem;font:600 .72rem var(--disp);min-height:50px}
+ .tabs .ic{display:block;width:24px;height:24px}
+ main{padding-bottom:calc(6rem + env(safe-area-inset-bottom,0px))}
+ #toast{bottom:calc(5.2rem + env(safe-area-inset-bottom,0px))}
+}

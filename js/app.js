@@ -279,12 +279,27 @@ function dueText(c) {
   return "Umsatz " + S().umsatzJahr + ": " + eur(c.uPlan) + trendKurz(c) + " · " + w + (c.gapOk ? "" : " · Mindestabstand noch nicht erreicht");
 }
 const telLink = t => t ? `<a href="tel:${esc(t.replace(/[^\d+]/g, ""))}">${esc(t)}</a>` : "";
+// Kleine Symbole (selbst gezeichnet und im Programm enthalten – es wird nichts aus dem Internet geladen)
+const svgIcon = d => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${d}</svg>`;
+const ICON = {
+  navi: svgIcon(`<path d="M3 11 21 3l-8 18-2-8z"/>`),
+  tel: svgIcon(`<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>`),
+  mobil: svgIcon(`<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 17.5h2"/>`),
+  pfeil: svgIcon(`<path d="m9 6 6 6-6 6"/>`),
+  heute: svgIcon(`<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/>`),
+};
+// Anruf als Knopf (Telefon oder Mobil)
+const telKnopf = (t, text, icon = ICON.tel) => `<a class="pill" href="tel:${esc(t.replace(/[^\d+]/g, ""))}" aria-label="${esc(text + " " + t)}">${icon}${text}</a>`;
 // Navigation zu einem Kunden: auf dem iPhone Apple Karten, sonst Google Maps. Es wird nur die Adresse übergeben (kein Firmenname).
-function navLink(c, text) {
+function navLink(c, text, cls = "") {
   const adr = [c.str, (c.plz + " " + c.ort).trim()].filter(Boolean).join(", ");
   const url = IOS ? "https://maps.apple.com/?daddr=" + encodeURIComponent(adr) + "&dirflg=d" : "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(adr) + "&travelmode=driving";
-  return `<a href="${url}" target="_blank" rel="noopener">${text}</a>`;
+  return `<a${cls ? ` class="${cls}"` : ""} href="${url}" target="_blank" rel="noopener">${text}</a>`;
 }
+// Auf-/zugeklappte Bereiche: auf dem Handy anfangs zu, am Rechner offen; die letzte Wahl bleibt beim Neuzeichnen erhalten
+const AUF = {};
+const handy = () => matchMedia("(max-width:640px)").matches;
+const offenAttr = (key, standard) => (AUF[key] ?? standard) ? "open" : "";
 function gmaps(D) {
   const pts = []; const e = P.dayEnds(D); pts.push(e.start === HOME ? S().start : (D.hotel.plz + " " + D.hotel.ort));
   for (const id of D.stops) { const c = byId(id); if (c) pts.push(`${c.str}, ${c.plz} ${c.ort}`); }
@@ -365,8 +380,10 @@ function alternativenHTML(di, c, alts) {
   const zeilen = alts.map(a => { const k = byId(a.id), tel = k.tel || k.mob;
     return `<label class="altz"><input type="checkbox" value="${esc(k.id)}"><span><b>${esc(k.n1)}</b> ${abcTag(k)}${merkmalSchilder(k)} · ${esc(k.ort)}, ${a.km < 1 ? "gleicher Ort" : Math.round(a.km) + " km entfernt"}${tel ? " · " + telLink(tel) : ""}${a.weit ? " · " + (P.MERKMAL() ? "kein " + esc(P.MERKMAL()) : "wenig Umsatz") : ""}</span></label>`; }).join("");
   const knopf = (a, t) => `<button data-a="${a}" data-d="${di}" data-id="${c.id}">${t}</button>`;
-  return `<div class="alt"><span class="altt">Falls keine Zeit – ${alts.length > 1 ? "Alternativen" : "Alternative"} ankreuzen:</span>${zeilen}
-    <span class="altk">${knopf("alt", "Statt Kunde")}${knopf("altdavor", "Zusätzlich davor")}${knopf("altdanach", "Zusätzlich danach")}</span></div>`;
+  // zugeklappt (Optik 2026-10-16): ein Tipp auf die Zeile öffnet die Liste
+  return `<details class="alt" data-auf="alt-${esc(c.id)}" ${offenAttr("alt-" + c.id, false)}><summary>${ICON.pfeil}<span>${alts.length} ${alts.length > 1 ? "Alternativen" : "Alternative"}, falls keine Zeit</span></summary>
+    <div class="altin"><span class="altt">Ankreuzen, dann wählen:</span>${zeilen}
+    <span class="altk">${knopf("alt", "Statt Kunde")}${knopf("altdavor", "Zusätzlich davor")}${knopf("altdanach", "Zusätzlich danach")}</span></div></details>`;
 }
 function renderPlan() {
   const PL = PLAN();
@@ -379,16 +396,22 @@ function renderPlan() {
   const nGesch = legs.filter(L => L.geschaetzt).length;
   const fzText = !legs.length ? "" : nGesch === 0 ? `Echte Fahrzeiten (OpenRouteService${+S().zuschlag ? ", +" + S().zuschlag + " % Zuschlag" : ""})`
     : nGesch === legs.length ? "Entfernungen und Fahrzeiten sind noch Schätzungen" : "Fahrzeiten teilweise geschätzt (≈)";
+  // „Heute“: springt zum heutigen Tag; die Planungsfelder sind auf dem Handy zugeklappt (Optik 2026-10-16)
+  const heuteDa = PL.days.some(D => D.type !== "home" && D.date === today() && D.stops.length);
   let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}${+S().ersterMaxKm > 0 ? " · erster Besuch höchstens " + S().ersterMaxKm + " km" : ""}</p></div>
-   <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung)}<button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button class="ghost" data-a="wloeschen">Woche löschen</button></div></div>
-   ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze Norddeutschland"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
+   <div class="planknoepfe">${heuteDa ? `<button class="pri heuteknopf" data-a="heute">${ICON.heute}Heute</button>` : ""}
+   <details class="planen" data-auf="planen" ${offenAttr("planen", !handy())}><summary>${ICON.pfeil}Planung ändern</summary>
+   <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung)}<button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button class="ghost" data-a="wloeschen">Woche löschen</button></div></details></div></div>
+   ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze der Woche"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
   PL.days.forEach((D, di) => {
     const date = fmtD(D.date);
-    if (D.type === "home") { html += `<article class="day home"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span></header><p>Home-Office. Zeit für Angebote, Muster und die Ausschreibungsrecherche.</p>${homeTermine(D.date)}${openTasksHTML()}</article>`; return; }
+    if (D.type === "home") { html += `<article class="day home" id="tag-${D.date}"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span></header><p>Home-Office. Zeit für Angebote, Muster und die Ausschreibungsrecherche.</p>${homeTermine(D.date)}${openTasksHTML()}</article>`; return; }
     const sim = P.simDay(D);
     const nFix = D.stops.filter(id => P.istFix(id, D.day)).length;
     const label = D.type === "ov1" ? "Übernachtungstour · Tag 1" : D.type === "ov2" ? "Übernachtungstour · Tag 2" : "Tagestour";
-    html += `<article class="day ${D.type}" style="--dc:var(--d${di})"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span><span class="kind">${label}</span></header>`;
+    const istHeute = D.date === today();
+    const tagSumme = D.stops.length ? `<span class="tagsum">${D.stops.length} ${D.stops.length === 1 ? "Besuch" : "Besuche"} · ${D.type === "ov1" ? "Ende ca. " + hhmm(sim.end) + (D.hotel ? " · Hotel in " + esc(D.hotel.ort) : "") : "zurück ca. " + hhmm(sim.end)}</span>` : "";
+    html += `<article class="day ${D.type}${istHeute ? " heute" : ""}" id="tag-${D.date}" style="--dc:var(--d${di})"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span>${istHeute ? `<span class="heutemk">Heute</span>` : ""}<span class="kind">${label}</span>${tagSumme}</header>`;
     if (!D.stops.length) { html += `<p class="muted">Keine passenden Kunden gefunden.</p></article>`; return; }
     const startName = D.type === "ov2" ? "Hotel in " + esc(D.hotel.ort) : "Bremen";
     html += `<ol class="stops"><li class="node">${hhmm(sim.depart)} Abfahrt ${startName}</li>`;
@@ -397,7 +420,8 @@ function renderPlan() {
       const alts = (alt[c.id] || []).filter(a => byId(a.id));
       html += `<li class="leg"><span class="drv">${L.geschaetzt && nGesch < legs.length ? "≈ " : ""}${Math.round(L.km)} km · ${Math.round(L.min)} Min.</span></li>
        <li class="stop${done ? " done" : ""}${L.fixed ? " isfix" : ""}"><div class="t"><span class="nr" style="background:var(--dc)">${nr}</span>${hhmm(L.begin)}${L.fixed ? `<span class="fixb">${TERMINE()[c.id]?.bis ? "Wunschzeit" : "fix"}</span>` : ""}</div><div class="who"><button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> ${abcTag(c)}${merkmalSchilder(c)}
-       <div class="sub">${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)} · ${navLink(c, "Navi")}${c.tel ? " · " + telLink(c.tel) : ""}${c.mob ? " · Mobil " + telLink(c.mob) : ""} · ${L.dur} Min. · ${dueText(c)}${!c.oh ? " · Öffnungszeiten unbekannt" : c.ohp.known ? "" : " · Öffnungszeiten nicht lesbar"}</div>${L.warn ? `<div class="warn">${esc(L.warn)}</div>` : ""}${L.fixed ? kalHinweis(c.id) : ""}</div>
+       <div class="sub">${esc(c.ort)} · ${L.dur} Min. · Umsatz ${S().umsatzJahr}: ${eur(c.uPlan)}${trendKurz(c)} · ${c.since == null ? "noch nie besucht" : "zuletzt vor " + Math.round(c.since / 7) + " Wo."}${c.gapOk ? "" : " · Mindestabstand noch nicht erreicht"}</div>
+       <div class="kontakt">${navLink(c, ICON.navi + "Navi", "pill")}${c.tel ? telKnopf(c.tel, "Anrufen") : ""}${c.mob ? telKnopf(c.mob, "Mobil", ICON.mobil) : ""}</div>${L.warn ? `<div class="warn">${esc(L.warn)}</div>` : ""}${L.fixed ? kalHinweis(c.id) : ""}</div>
        <div class="acts">${done ? `<span class="ok">besucht</span>` : D.abgeschlossen ? `<span class="warn">nicht angetroffen</span>` : `${L.fixed ? `<button data-a="unfix" data-d="${di}" data-id="${c.id}">Fix lösen</button>` : `<button data-a="fix" data-d="${di}" data-id="${c.id}" data-time="${hhmm(L.begin)}">Termin fix</button><button data-a="wunsch" data-d="${di}" data-id="${c.id}">Wunsch&shy;zeit</button>`}<button data-a="visit" data-id="${c.id}">Besuch erfassen</button>`}<button data-a="rm" data-d="${di}" data-id="${c.id}" aria-label="${esc(c.n1)} aus der Tour nehmen">Entfernen</button></div>
        ${done ? "" : alts.length ? alternativenHTML(di, c, alts) : `<div class="alt">Keine Alternative in der Nähe gefunden</div>`}</li>`;
     });
@@ -444,8 +468,14 @@ const hl = c => c.abc === "A";
 function drawMap() {
   const svg = $("#map"); const PL = PLAN(); if (!svg || !PL) return;
   const pts = P.CUST.filter(c => !c.out && c.lat != null);
-  const la = pts.map(c => c.lat), ln = pts.map(c => c.lng);
-  const minLa = Math.min(...la, HOME.lat) - 0.15, maxLa = Math.max(...la) + 0.15, minLn = Math.min(...ln) - 0.2, maxLn = Math.max(...ln) + 0.2;
+  // Ausschnitt nur für den Bereich der geplanten Woche (mit Rand), damit die Touren gut zu sehen sind (Optik 2026-10-16)
+  const woche = PL.days.flatMap(D => D.stops.map(byId).filter(c => c && c.lat != null)).concat(HOME, PL.days.filter(D => D.hotel && D.hotel.lat != null).map(D => D.hotel));
+  const basis = woche.length > 1 ? woche : pts.concat(HOME);
+  const la = basis.map(c => c.lat), ln = basis.map(c => c.lng);
+  let minLa = Math.min(...la) - 0.12, maxLa = Math.max(...la) + 0.12, minLn = Math.min(...ln) - 0.2, maxLn = Math.max(...ln) + 0.2;
+  // nicht zu stark vergrößern: mindestens etwa 1° Breite und 1,6° Länge
+  if (maxLa - minLa < 1) { const m = (maxLa + minLa) / 2; minLa = m - 0.5; maxLa = m + 0.5; }
+  if (maxLn - minLn < 1.6) { const m = (maxLn + minLn) / 2; minLn = m - 0.8; maxLn = m + 0.8; }
   const k = Math.cos(53.5 * Math.PI / 180); const H = 460, W = Math.round(H * ((maxLn - minLn) * k) / (maxLa - minLa)) + 20; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const sx = (W - 20) / ((maxLn - minLn) * k), sy = (H - 20) / (maxLa - minLa), sc = Math.min(sx, sy);
   const ox = (W - (maxLn - minLn) * k * sc) / 2, oy = (H - (maxLa - minLa) * sc) / 2;
@@ -557,14 +587,21 @@ function renderList() {
   else L.sort((a, b) => b.urg - a.urg);
   return `<div class="listhead"><div><h2>Kunden</h2><p class="muted">${P.CUST.length} aktiv · ${P.MERKMAL() ? "Planung: nur " + esc(P.MERKMAL()) + " · " : ""}${P.LAENGST() ? "am längsten nicht besuchte zuerst" : "sortiert nach Umsatz " + S().umsatzJahr}</p></div>
    <div class="row"><button data-a="naehe">In der Nähe</button><button data-a="neukunden">Neue Kunden finden</button><button class="pri" data-a="new">Kunde hinzufügen</button><button data-a="export">Als Excel sichern</button></div></div>
-   <div class="filters"><input type="search" id="q" placeholder="Name, Ort oder PLZ suchen" value="${esc(FILTER.q)}" aria-label="Kunden suchen">
-   <select id="fabc" aria-label="Priorität"><option value="">Alle Prioritäten</option>${["A", "B", "C"].map(x => `<option ${FILTER.abc === x ? "selected" : ""}>${x}</option>`).join("")}</select>
+   ${kundenFilter()}
+   <ul class="clist">${L.slice(0, 200).map(c => `<li><button class="crow" data-a="open" data-id="${c.id}">${abcTag(c)}<span class="cn">${esc(c.n1)}<small>${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)}${merkmaleKurz(c)}${c.out && P.startBekannt() ? " · außerhalb des Gebiets, wird nicht eingeplant" : ""}${c.planHold ? " · aus der Planung genommen" : ""}${c.isNew ? " · neu angelegt" : ""}${terminKurz(c.id)}</small></span>
+   <span class="cd">${dueText(c)}</span></button></li>`).join("")}</ul>${L.length > 200 ? `<p class="muted">${L.length - 200} weitere – bitte Suche nutzen.</p>` : ""}`;
+}
+// Suche und Filter der Kundenliste; auf dem Handy sind die Filter zugeklappt (Optik 2026-10-16)
+function kundenFilter() {
+  const suche = `<input type="search" id="q" placeholder="Name, Ort oder PLZ suchen" value="${esc(FILTER.q)}" aria-label="Kunden suchen">`;
+  const teile = `<select id="fabc" aria-label="Priorität"><option value="">Alle Prioritäten</option>${["A", "B", "C"].map(x => `<option ${FILTER.abc === x ? "selected" : ""}>${x}</option>`).join("")}</select>
    ${haekchenSpalten().length ? `<select id="fmerkmal" aria-label="Merkmal"><option value="">Alle Kunden</option>${haekchenSpalten().map(s => `<option value="${esc(s)}" ${FILTER.merkmal === s ? "selected" : ""}>nur ${esc(s)}</option>`).join("")}</select>` : ""}
    <label class="chk"><input type="checkbox" id="fdue" ${FILTER.due ? "checked" : ""}> nur planbare</label>
    <label class="chk"><input type="checkbox" id="foh" ${FILTER.ohneOh ? "checked" : ""}> ohne Öffnungszeiten (${P.CUST.filter(c => !c.oh || !c.ohp.known).length})</label>
-   ${P.trendInfo() && !P.trendInfo().zuFrueh ? `<label class="chk"><input type="checkbox" id="ftrend" ${FILTER.trend ? "checked" : ""}> Umsatz rückläufig (${P.CUST.filter(ruecklaeufig).length})</label>` : ""}</div>
-   <ul class="clist">${L.slice(0, 200).map(c => `<li><button class="crow" data-a="open" data-id="${c.id}">${abcTag(c)}<span class="cn">${esc(c.n1)}<small>${esc(c.plz)} ${esc(c.ort)} · ${kdKurz(c)}${merkmaleKurz(c)}${c.out && P.startBekannt() ? " · außerhalb des Gebiets, wird nicht eingeplant" : ""}${c.planHold ? " · aus der Planung genommen" : ""}${c.isNew ? " · neu angelegt" : ""}${terminKurz(c.id)}</small></span>
-   <span class="cd">${dueText(c)}</span></button></li>`).join("")}</ul>${L.length > 200 ? `<p class="muted">${L.length - 200} weitere – bitte Suche nutzen.</p>` : ""}`;
+   ${P.trendInfo() && !P.trendInfo().zuFrueh ? `<label class="chk"><input type="checkbox" id="ftrend" ${FILTER.trend ? "checked" : ""}> Umsatz rückläufig (${P.CUST.filter(ruecklaeufig).length})</label>` : ""}`;
+  if (!handy()) return `<div class="filters">${suche}${teile}</div>`;
+  const aktiv = [FILTER.abc, FILTER.merkmal, FILTER.due, FILTER.ohneOh, FILTER.trend].filter(Boolean).length;
+  return `<div class="filters">${suche}</div><details class="filterbox" data-auf="filter" ${offenAttr("filter", false)}><summary>${ICON.pfeil}Filter${aktiv ? ` <span class="termin">(${aktiv} aktiv)</span>` : ""}</summary><div class="filters">${teile}</div></details>`;
 }
 
 /* ---------- Auswertung der geschäftlichen Notizen (private Notizen nie) ---------- */
@@ -733,7 +770,9 @@ function openCustomer(id) {
   const tf = kommenderTermin(id);
   dlg(`<header class="dh"><h3>${esc(c.n1)} ${abcTag(c)}</h3><button value="x" class="ghost" aria-label="Schließen">Schließen</button></header>
    <p class="muted">${kdText(c)}</p>
-   <p>${esc(c.n2)} ${esc(c.n3)}<br>${esc(c.str)}, ${esc(c.plz)} ${esc(c.ort)}<br>${navLink(c, "Navigation starten")}</p>
+   <div class="schnell">${c.tel ? telKnopf(c.tel, "Anrufen") : ""}${c.mob ? telKnopf(c.mob, "Mobil", ICON.mobil) : ""}${navLink(c, ICON.navi + "Navi", "pill")}</div>
+   <div class="row wrap"><button class="pri" value="visit" data-id="${c.id}">Besuch erfassen</button><button value="appt" data-id="${c.id}">${tf ? "Termin ändern" : "Termin vereinbaren"}</button>${tf ? `<button value="delappt" data-id="${c.id}" class="ghost">Termin absagen</button>` : ""}</div>
+   <p>${[c.n2, c.n3].filter(Boolean).length ? [c.n2, c.n3].filter(Boolean).map(esc).join(" ") + "<br>" : ""}${esc(c.str)}, ${esc(c.plz)} ${esc(c.ort)}</p>
    <dl class="facts"><dt>Telefon</dt><dd>${c.tel ? telLink(c.tel) : "–"}</dd>
    <dt>Mobil</dt><dd>${c.mob ? telLink(c.mob) : "–"}</dd>${c.tel2 ? `<dt>Telefon 2</dt><dd>${telLink(c.tel2)}</dd>` : ""}
    <dt>E-Mail</dt><dd>${c.mail ? `<a href="mailto:${esc(c.mail)}">${esc(c.mail)}</a>` : "–"}</dd>
@@ -746,8 +785,7 @@ function openCustomer(id) {
    ${kollektionenHTML(c)}
    <h4>Notizen</h4>${notizListe(c, "notes") || `<p class="muted">Noch keine Notizen.</p>`}
    <h4>Private Notizen</h4>${notizListe(c, "pnotes") || `<p class="muted">Noch keine privaten Notizen.</p>`}
-   <div class="row wrap"><button class="pri" value="visit" data-id="${c.id}">Besuch erfassen</button><button value="edit" data-id="${c.id}">Bearbeiten</button><button value="bestwahl" data-id="${c.id}">Bestellformular</button><button value="bfform" data-id="${c.id}">Beanstandung</button>
-   <button value="appt" data-id="${c.id}">${tf ? "Termin ändern" : "Termin vereinbaren"}</button>${tf ? `<button value="delappt" data-id="${c.id}" class="ghost">Termin absagen</button>` : ""}
+   <div class="row wrap"><button value="edit" data-id="${c.id}">Bearbeiten</button><button value="bestwahl" data-id="${c.id}">Bestellformular</button><button value="bfform" data-id="${c.id}">Beanstandung</button>
    ${PL && dayOpts ? `<label class="inl">Zur Tour am <select id="addday">${dayOpts}</select></label><button value="addtour" data-id="${c.id}">hinzufügen</button>` : ""}</div>`);
 }
 function removeDialog(di, id) {
@@ -1525,6 +1563,7 @@ document.addEventListener("click", async e => {
     if (a === "sichern") { const n = await sicherungAnlegen(uhrzeitJetzt()); render(); toast("Gesichert: " + n); }
     if (a === "tagab") tagAbschliessenDialog(b.dataset.week, +b.dataset.d);
     if (a === "wzeigen") { DATA.plan = planVon(b.dataset.week) || DATA.plan; persist(false); render(); scrollTo(0, 0); }
+    if (a === "heute") { const el = document.getElementById("tag-" + today()); if (el) el.scrollIntoView({ block: "start" }); }
     if (a === "spalteneu") spalteHinzufuegen();
     if (a === "kollneu") kollektionHinzufuegen();
     if (a === "kollweg") kollektionEntfernen(b.dataset.koll);
@@ -1566,6 +1605,8 @@ document.addEventListener("input", e => {
   if (t.id === "aq") { AUSW.q = t.value; const p = t.selectionStart; render(); const q = $("#aq"); q.focus(); q.setSelectionRange(p, p); }
   if (t.id === "q") { FILTER.q = t.value; const p = t.selectionStart; render(); const q = $("#q"); q.focus(); q.setSelectionRange(p, p); }
 });
+// Auf-/Zuklappen merken (das Ereignis steigt nicht auf, daher in der Einfangphase)
+document.addEventListener("toggle", e => { const d = e.target; if (d && d.dataset && d.dataset.auf) AUF[d.dataset.auf] = d.open; }, true);
 document.addEventListener("change", async e => {
   const t = e.target;
   if (t.id === "fabc") { FILTER.abc = t.value; render(); }
