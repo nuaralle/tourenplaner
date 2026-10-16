@@ -23,6 +23,50 @@ export const kollektionName = s => { const m = String(s ?? "").trim().match(/^Ko
 export const kollektionSpalten = spalten => eigeneSpalten(spalten).filter(s => kollektionName(s));
 // Wert einer Kollektions-Spalte -> null (nicht verkauft) oder { datum: "JJJJ-MM-TT" bzw. "" }
 export const kollektionWert = v => { const s = txt(v); return !s || /^(nein|n|0|falsch|false)$/i.test(s) ? null : { datum: datum(s) }; };
+
+// Kollektionsliste einlesen (Wunsch 2026-10-16), z. B. Rechnungsliste einer Kollektion: je Zeile Kundennummer und Datum.
+// Ergebnis: { zeilen: [{ id, datum, name, ort }], vorschlag: Name der Kollektion aus dem Artikel bzw. Dateinamen }
+const istKdSpalte = s => /^(kd\.?\s*-?\s*nr\.?|kunden\s*-?\s*nr\.?|kundennummer|kunde\s*-?\s*nr\.?)$/i.test(txt(s));
+const listenDatum = v => {
+  if (v instanceof Date || typeof v === "number") return datum(v);
+  const s = txt(v), m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/); // amerikanisch: Monat/Tag/Jahr
+  if (m) return (m[3].length === 2 ? "20" + m[3] : m[3]) + "-" + m[1].padStart(2, "0") + "-" + m[2].padStart(2, "0");
+  return datum(s.split(" ")[0]);
+};
+export function kollektionslisteLesen(XLSX, daten, dateiname = "") {
+  const wb = XLSX.read(daten, { type: "array", cellDates: true });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" });
+  const k = rows.slice(0, 15).findIndex(r => r.some(istKdSpalte));
+  if (k < 0) throw new Error("In der Liste fehlt eine Spalte „Kundennr.“ bzw. „Kd Nr.“");
+  const kopf = rows[k].map(txt), sp = re => kopf.findIndex(s => re.test(s));
+  const iKd = kopf.findIndex(istKdSpalte), iDat = sp(/datum/i), iName = sp(/^name\s*1?$/i), iOrt = sp(/^ort$/i), iArt = sp(/^artikel$/i);
+  const zeilen = [];
+  for (const r of rows.slice(k + 1)) {
+    const id = txt(r[iKd]).replace(/\.0+$/, ""); if (!id) continue;
+    zeilen.push({ id, datum: iDat >= 0 ? listenDatum(r[iDat]) : "", name: iName >= 0 ? txt(r[iName]) : "", ort: iOrt >= 0 ? txt(r[iOrt]) : "", artikel: iArt >= 0 ? txt(r[iArt]) : "" });
+  }
+  const art = (zeilen.find(z => z.artikel) || {}).artikel || "";
+  const m = art.match(/"([^"]+)"/) || art.match(/koll(?:ektion)?\.?\s+(.+)$/i) || String(dateiname).replace(/\.[a-z]+$/i, "").match(/koll(?:ektion)?\.?\s+(.+)$/i);
+  return { zeilen, vorschlag: m ? m[1].trim() : "" };
+}
+// Abgleich mit den Kunden: je Kunde zählt das früheste Datum der Liste; ein schon eingetragenes früheres Datum bleibt
+export function kollektionAbgleich(zeilen, kunden, spalte) {
+  const kd = new Map(kunden.map(k => [String(k.id), k])), erste = new Map();
+  for (const z of zeilen) { const g = erste.get(z.id); if (!g || (z.datum && (!g.datum || z.datum < g.datum))) erste.set(z.id, z); }
+  const neu = [], frueher = [], schon = [], fehlt = [];
+  for (const z of erste.values()) {
+    const k = kd.get(z.id); if (!k) { fehlt.push(z); continue; }
+    const w = kollektionWert((k.extra || {})[spalte]);
+    if (!w) neu.push({ k, datum: z.datum });
+    else if (z.datum && (!w.datum || z.datum < w.datum)) frueher.push({ k, datum: z.datum, alt: w.datum });
+    else schon.push({ k, datum: w.datum });
+  }
+  return { neu, frueher, schon, fehlt, zeilen: zeilen.length };
+}
+export function kollektionAnwenden(abgl, spalte) {
+  for (const x of abgl.neu.concat(abgl.frueher)) x.k.extra = { ...(x.k.extra || {}), [spalte]: x.datum || "ja" };
+  return abgl.neu.length + abgl.frueher.length;
+}
 // Umsatz-Spalten werden am Namen erkannt: "Umsatz 25", "Umsatz 26", "Umsatz 2027" … -> Jahr
 export const umsatzJahr = name => { const m = String(name).trim().match(/^Umsatz\s*(\d{2}|\d{4})$/i); return m ? (m[1].length === 2 ? 2000 + +m[1] : +m[1]) : null; };
 // Reihenfolge der Spalten, wenn die Datei keine vorgibt (wie im bisherigen Stand)

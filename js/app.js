@@ -2,7 +2,7 @@
 import { HOME, WD, WDS, DEFAULTS, tmin, hhmm, iso, parseISO, addDays, fmtD, eur, today, esc, luftlinie, hotelOrt } from "./grundlagen.js";
 import * as P from "./planung.js";
 import { PLZ } from "./plz.js";
-import { leseStand, schreibeStand, kundenNormalisieren, umsatzJahre, umsatzJahr, eigeneSpalten, spalteBekannt, kollektionName, kollektionSpalten, kollektionWert, STANDARD_REIHENFOLGE, kundenlisteLesen, abgleichVorschlag, abgleichAnwenden, stammName } from "./excel.js";
+import { leseStand, schreibeStand, kundenNormalisieren, umsatzJahre, umsatzJahr, eigeneSpalten, spalteBekannt, kollektionName, kollektionSpalten, kollektionWert, kollektionslisteLesen, kollektionAbgleich, kollektionAnwenden, STANDARD_REIHENFOLGE, kundenlisteLesen, abgleichVorschlag, abgleichAnwenden, stammName } from "./excel.js";
 import * as Sp from "./speicher.js";
 import * as G from "./google.js";
 import * as F from "./fahrzeiten.js";
@@ -561,6 +561,49 @@ function kollektionHinzufuegen() {
   spalten.push(spalte); DATA.spalten = spalten; persist(); render();
   toast("Kollektion „" + name + "“ angelegt");
 }
+// Kollektionsliste einlesen: Vorschau, dann Übernehmen (vorher Sicherung in Google Drive)
+let KOLLL = null; // { datei, zeilen, vorschlag }
+async function kollListeStarten(datei) {
+  const r = kollektionslisteLesen(XLSX, await datei.arrayBuffer(), datei.name);
+  if (!r.zeilen.length) { toast("In der Liste stehen keine Kundennummern"); return; }
+  KOLLL = { datei: datei.name, ...r };
+  kollListeDialog();
+}
+function kollListeDialog(wahl) {
+  const L = kollektionen(), v = KOLLL.vorschlag.toLowerCase();
+  const passend = v ? L.find(s => kollektionName(s).toLowerCase() === v) || L.find(s => { const n = kollektionName(s).toLowerCase(); return n.includes(v) || v.includes(n); }) : null;
+  const neuName = v && !passend ? KOLLL.vorschlag.charAt(0).toUpperCase() + KOLLL.vorschlag.slice(1).toLowerCase() : "";
+  wahl = wahl || passend || (neuName ? "neu:" + neuName : L[0] || "");
+  const spalte = wahl.startsWith("neu:") ? "Kollektion " + wahl.slice(4) : wahl;
+  const a = spalte ? kollektionAbgleich(KOLLL.zeilen, DATA.kunden, spalte) : { neu: [], frueher: [], schon: [], fehlt: [], zeilen: KOLLL.zeilen.length };
+  const n = a.neu.length + a.frueher.length;
+  dlg(`<header class="dh"><h3>Kollektionsliste einlesen</h3><button value="x" class="ghost">Abbrechen</button></header>
+   <p class="muted">${esc(KOLLL.datei)} · ${a.zeilen} Zeilen</p>
+   ${L.length || neuName ? `<label>Kollektion<select id="kollwahl">${L.map(s => `<option value="${esc(s)}" ${s === wahl ? "selected" : ""}>${esc(kollektionName(s))}</option>`).join("")}${neuName ? `<option value="neu:${esc(neuName)}" ${wahl === "neu:" + neuName ? "selected" : ""}>„${esc(neuName)}“ neu anlegen</option>` : ""}</select></label>`
+     : `<p class="warn">Es ist noch keine Kollektion angelegt – bitte zuerst unter Einstellungen › Kollektionen anlegen.</p>`}
+   <ul class="kollerg"><li><b>${a.neu.length}</b> Kunden werden eingetragen (Datum aus der Liste)</li>
+   ${a.frueher.length ? `<li><b>${a.frueher.length}</b> schon eingetragene Kunden bekommen das frühere Datum aus der Liste</li>` : ""}
+   ${a.schon.length ? `<li><b>${a.schon.length}</b> sind schon eingetragen und bleiben, wie sie sind</li>` : ""}
+   ${a.fehlt.length ? `<li><b>${a.fehlt.length}</b> ${a.fehlt.length === 1 ? "Kundennummer steht" : "Kundennummern stehen"} nicht in Ihrer Kundenliste: ${a.fehlt.slice(0, 30).map(z => esc(z.id) + (z.name ? " " + esc(z.name) : "") + (z.ort ? " (" + esc(z.ort) + ")" : "")).join(", ")}${a.fehlt.length > 30 ? " …" : ""}</li>` : ""}</ul>
+   <div class="row"><button class="pri" value="kolllisteok" data-wahl="${esc(wahl)}" ${n ? "" : "disabled"}>Übernehmen</button></div>`);
+}
+async function kollListeAnwenden(wahl) {
+  if (!KOLLL || !wahl) return;
+  // vorher den bisherigen Stand sichern (wie beim Kundenlisten-Abgleich)
+  if (driveBereit()) {
+    try { toast("Sicherung wird angelegt …"); await sicherungAnlegen("vor_Kollektionsliste_" + uhrzeitJetzt()); }
+    catch (e) { if (!confirm("Die Sicherung in Google Drive hat nicht geklappt (" + e.message + "). Liste trotzdem übernehmen?")) return; }
+  } else if (!confirm("Keine Verbindung zu Google Drive – vorher wird keine Sicherung angelegt. Liste trotzdem übernehmen?")) return;
+  let spalte = wahl;
+  if (wahl.startsWith("neu:")) {
+    spalte = "Kollektion " + wahl.slice(4);
+    const sp = DATA.spalten && DATA.spalten.length ? DATA.spalten : STANDARD_REIHENFOLGE.slice();
+    if (!sp.some(s => s.toLowerCase() === spalte.toLowerCase())) sp.push(spalte); DATA.spalten = sp;
+  }
+  const a = kollektionAbgleich(KOLLL.zeilen, DATA.kunden, spalte), n = kollektionAnwenden(a, spalte);
+  KOLLL = null; geaendert();
+  toast(`${kollektionName(spalte)}: bei ${n} Kunden eingetragen` + (a.fehlt.length ? ` · ${a.fehlt.length} nicht in der Kundenliste` : ""));
+}
 function kollektionEntfernen(s) {
   const name = kollektionName(s), n = DATA.kunden.filter(k => kollektionWert((k.extra || {})[s])).length;
   if (!confirm(`Kollektion „${name}“ entfernen?` + (n ? ` Sie ist bei ${n} Kunden eingetragen – diese Einträge werden gelöscht.` : ""))) return;
@@ -700,7 +743,9 @@ function renderSettings() {
    <p class="muted">${kollektionen().length ? "Vorhanden: " + kollektionen().map(s => esc(kollektionName(s))).join(", ") + "." : "Noch keine Kollektionen."} Verkaufte Kollektionen tragen Sie beim Kunden per Häkchen ein (mit Datum), auch bei „Besuch erfassen“. In Excel hat jede Kollektion eine eigene Spalte „Kollektion …“.</p>
    <label>Neue Kollektion<input id="kollname" placeholder="Name der Kollektion" autocomplete="off"></label>
    <button data-a="kollneu">Kollektion hinzufügen</button>
-   ${kollektionen().length ? `<div class="row wrap">${kollektionen().map(s => `<button class="ghost" data-a="kollweg" data-koll="${esc(s)}">„${esc(kollektionName(s))}“ entfernen</button>`).join("")}</div>` : ""}</fieldset>
+   ${kollektionen().length ? `<div class="row wrap">${kollektionen().map(s => `<button class="ghost" data-a="kollweg" data-koll="${esc(s)}">„${esc(kollektionName(s))}“ entfernen</button>`).join("")}</div>` : ""}
+   <label>Kollektionsliste einlesen (Excel mit Kundennummer und Datum, z. B. Rechnungsliste einer Kollektion)<input type="file" id="kolllistefile" accept=".xlsx,.xls,.csv"></label>
+   <p class="muted">Die App zeigt vorher, bei welchen Kunden die Kollektion mit welchem Datum eingetragen wird. Kundennummern, die nicht in Ihrer Kundenliste stehen, werden nur aufgelistet.</p></fieldset>
   <fieldset><legend>Daten</legend>
    <p class="muted">Stand: ${esc(DATA.quelle || "–")}${G.konfiguriert() ? "" : `<br>Gespeichert auf diesem Gerät.${DATA.ungesichert ? ` <span class="warn">Es gibt Änderungen, die noch nicht als Excel gesichert sind.</span>` : ""}`}</p>
    ${G.konfiguriert() ? `<p class="muted">Sicherungen: einmal pro Woche und vor jedem Kundenlisten-Abgleich in Google Drive › ${G.ORDNER} › ${G.SICHERUNG_ORDNER}. Letzte Sicherung: ${DATA.sicherung ? fmtD(DATA.sicherung) : "noch keine"}.</p>
@@ -1144,6 +1189,7 @@ function dlgAktion(v, btn) {
   if (v === "edit") { editDialog(id); return; }
   if (v === "appt") { terminDialog(id); return; }
   if (v === "tagabspeichern") { tagAbschliessen(btn.dataset.week, +btn.dataset.d); return; }
+  if (v === "kolllisteok") { kollListeAnwenden(btn.dataset.wahl).catch(e => { console.error(e); toast("Fehler: " + e.message); }); return; }
   if (v === "abglspeichern") { abgleichUebernehmen().catch(e => { console.error(e); toast("Fehler: " + e.message); }); return; }
   if (v === "saveappt") { terminSpeichern(id); return; }
   if (v === "delappt") {
@@ -1618,6 +1664,11 @@ document.addEventListener("change", async e => {
   if (t.id === "ftrend") { FILTER.trend = t.checked; render(); }
   if (t.dataset.koll && t.type === "checkbox") kollektionSetzen(t);
   if (t.id === "wk" && $("#main #ovwahl") && (!PLAN() || t.value !== PLAN().week)) $("#main #ovwahl").value = ""; // neue Woche: Übernachtung neu wählen
+  if (t.id === "kolllistefile" && t.files[0]) {
+    try { await kollListeStarten(t.files[0]); } catch (err) { console.error(err); toast("Liste konnte nicht gelesen werden: " + err.message); }
+    t.value = "";
+  }
+  if (t.id === "kollwahl") kollListeDialog(t.value);
   if (t.id === "abglfile" && t.files[0]) {
     try { await abgleichStarten(t.files[0]); } catch (err) { console.error(err); toast("Liste konnte nicht gelesen werden: " + err.message); }
     t.value = "";

@@ -205,3 +205,4 @@ details.filterbox{margin:-.3rem 0 .8rem}details.filterbox[open]>.filters{margin-
  main{padding-bottom:calc(6rem + env(safe-area-inset-bottom,0px))}
  #toast{bottom:calc(5.2rem + env(safe-area-inset-bottom,0px))}
 }
+ul.kollerg{margin:0;padding-left:1.1rem;display:flex;flex-direction:column;gap:.35rem}
