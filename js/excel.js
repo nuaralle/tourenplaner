@@ -18,6 +18,11 @@ const ENTFERNT = new Set(["Lage (Breite, Länge)"]);
 // Eigene Spalten, die in der Kundenliste angelegt wurden (nicht vom Programm vorgegeben, keine Umsatz-Spalte)
 export const eigeneSpalten = spalten => (spalten || []).filter(s => !BEKANNT.has(s) && !ENTFERNT.has(s) && !umsatzJahr(s));
 export const spalteBekannt = s => BEKANNT.has(s);
+// Kollektionen (Wunsch 2026-10-16): eigene Spalten „Kollektion <Name>“, Wert = Verkaufsdatum (JJJJ-MM-TT) oder „ja“ (ohne Datum)
+export const kollektionName = s => { const m = String(s ?? "").trim().match(/^Kollektion\s+(\S.*)$/i); return m ? m[1].trim() : null; };
+export const kollektionSpalten = spalten => eigeneSpalten(spalten).filter(s => kollektionName(s));
+// Wert einer Kollektions-Spalte -> null (nicht verkauft) oder { datum: "JJJJ-MM-TT" bzw. "" }
+export const kollektionWert = v => { const s = txt(v); return !s || /^(nein|n|0|falsch|false)$/i.test(s) ? null : { datum: datum(s) }; };
 // Umsatz-Spalten werden am Namen erkannt: "Umsatz 25", "Umsatz 26", "Umsatz 2027" … -> Jahr
 export const umsatzJahr = name => { const m = String(name).trim().match(/^Umsatz\s*(\d{2}|\d{4})$/i); return m ? (m[1].length === 2 ? 2000 + +m[1] : +m[1]) : null; };
 // Reihenfolge der Spalten, wenn die Datei keine vorgibt (wie im bisherigen Stand)

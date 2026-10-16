@@ -1,6 +1,7 @@
 // Auswertung der geschäftlichen Notizen über alle Kunden (2026-10-09).
 // Private Notizen (pnotes) werden hier bewusst NIE ausgewertet.
 import { iso, parseISO, addDays, today } from "./grundlagen.js";
+import { kollektionName, kollektionWert } from "./excel.js";
 
 export const ZEITRAEUME = [["4w", "letzte 4 Wochen"], ["3m", "letzte 3 Monate"], ["6m", "letzte 6 Monate"], ["12m", "letzte 12 Monate"], ["alle", "alle Notizen"], ["frei", "von … bis …"]];
 // Zeitraum -> { von, bis } als "JJJJ-MM-TT" (von = "" heißt: ohne Anfang)
@@ -38,6 +39,16 @@ export function stichworte(L, anzahl = 20) {
     for (const x of w) z.set(x, (z.get(x) || 0) + 1);
   }
   return [...z.entries()].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, anzahl);
+}
+// Verkaufte Kollektionen (Wunsch 2026-10-16): je Kollektions-Spalte die Verkäufe im Zeitraum (neueste zuerst) und
+// die Zahl aller Kunden mit dieser Kollektion (auch ohne Datum und auch deaktivierte Kunden)
+export function kollektionen(kunden, spalten, { von, bis }) {
+  return spalten.map(s => {
+    const alle = kunden.map(k => ({ k, w: kollektionWert((k.extra || {})[s]) })).filter(x => x.w);
+    const imZeitraum = alle.filter(x => x.w.datum && (!von || x.w.datum >= von) && x.w.datum <= bis).map(x => ({ k: x.k, d: x.w.datum }))
+      .sort((a, b) => b.d.localeCompare(a.d) || a.k.n1.localeCompare(b.k.n1));
+    return { spalte: s, name: kollektionName(s), gesamt: alle.length, imZeitraum };
+  });
 }
 // Nach Kunde gruppiert (Kunden mit den meisten Notizen zuerst)
 export function nachKunde(L) {

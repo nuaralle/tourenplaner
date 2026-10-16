@@ -103,9 +103,18 @@ dialog::backdrop{background:rgba(10,20,24,.5)}
 @media (max-width:640px){.tabs{margin-left:0;width:100%}.tabs button{flex:1}.grid2{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.filters input{grid-column:1/-1}.facts{grid-template-columns:1fr}.facts dt{margin-top:.3rem}.days{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
 /* Ergänzungen Version 2 */
-.alt{grid-column:2;font-size:.85rem;color:var(--muted);background:var(--surf2);border-radius:6px;padding:.35rem .6rem;margin-top:.3rem;display:flex;flex-wrap:wrap;gap:.2rem .6rem;align-items:center}
+.alt{grid-column:2;font-size:.85rem;color:var(--muted);background:var(--surf2);border-radius:6px;padding:.35rem .6rem;margin-top:.3rem;display:flex;flex-direction:column}
+.alt .altt{padding-bottom:.25rem}
+.alt label.altz{flex-direction:row;align-items:flex-start;gap:.55rem;padding:.4rem 0;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted);cursor:pointer}
+.alt label.altz input{width:22px;height:22px;min-height:0;padding:0;margin:0;flex:none;accent-color:var(--dc)}
 .alt b{color:var(--ink);font-weight:600}
-.alt .altk{display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem;width:100%}
+.alt .altk{display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem;width:100%;margin-top:.35rem}
+.koll{display:flex;flex-direction:column;margin:.2rem 0 .6rem}
+.koll .kt{font-size:.9rem;color:var(--muted);margin-bottom:.1rem}
+.koll label.chk{min-height:42px;border-bottom:1px solid var(--line);gap:.6rem}
+.koll label.chk input{width:22px;height:22px;flex:none;margin:0;accent-color:var(--acc)}
+.koll .kdat{font-size:.85rem}
+.mk{display:inline-block;font:700 .7rem var(--disp);color:var(--acc);border:1px solid var(--acc);border-radius:3px;padding:0 .3rem;vertical-align:2px}
 .alt button{min-height:34px;padding:.2rem .3rem;font-size:.76rem;font-weight:700;line-height:1.15}
 .start{background:var(--surf);border-radius:10px;padding:1.5rem;max-width:40rem;display:flex;flex-direction:column;gap:.8rem}
 .start input[type=file]{padding:.6rem;background:var(--surf2)}

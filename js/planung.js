@@ -476,28 +476,41 @@ function alternativeOhneVerschlechterung(D) {
     return x.end <= Math.max(e.limit, basis.end + 10);
   };
 }
-// Zu jedem geplanten Besuch einen Alternativ-Kunden in der Nähe, der an dieselbe Stelle der Tour passt.
-// Reihenfolge der Suche: eigener Alternativ-Kunde -> mit anderem Besuch geteilt -> auch Kunden, die sonst nicht dran wären.
+// Zu jedem geplanten Besuch bis zu MAX_ALT Alternativ-Kunden in der Nähe, die jeweils an dieselbe Stelle der Tour passen
+// (Wunsch 2026-10-16). Ergebnis: { Kd-Nr.: [ {id, km, geteilt, weit}, … ] }, die beste zuerst.
+// Die erste wie bisher möglichst eine eigene (bei keinem anderen Besuch die erste); die weiteren dürfen auch bei
+// einem Nachbarbesuch vorkommen. Suche: eigener Alternativ-Kunde -> geteilt -> auch Kunden, die sonst nicht dran wären.
+export const MAX_ALT = 3;
 export function alternativen(plan) {
   setFix(plan.fixed || {}, plan.week); setzeStichtag(plan.week);
   const res = {}, vergeben = new Set();
   const stufen = [{ teilen: false, weit: false }, { teilen: true, weit: false }, { teilen: false, weit: true }, { teilen: true, weit: true }];
+  const weitere = [{ teilen: true, weit: false }, { teilen: true, weit: true }];
   for (const D of plan.days) {
     if (D.type === "home") continue;
     // Ist der Tag schon zu voll (z. B. nach „Alternative davor/danach“), reicht es, wenn der Tausch ihn nicht schlechter macht
     const passt = alternativeOhneVerschlechterung(D);
     D.stops.forEach((id, i) => {
       const s = byId(id); if (!s) return;
-      for (const st of stufen) {
-        const alle = ersatzKandidaten(plan, D, st.teilen ? null : vergeben, st.weit);
-        for (const radius of [30, 50, 80]) {
-          const cands = alle.filter(c => km(s, c) <= radius).sort((a, b) => b.urg / (1 + km(s, b) / 10) - a.urg / (1 + km(s, a) / 10));
-          for (const c of cands.slice(0, 25)) {
-            const seq = D.stops.slice(); seq[i] = c.id;
-            if (passt(seq)) { res[id] = { id: c.id, km: km(s, c), geteilt: vergeben.has(c.id), weit: st.weit }; vergeben.add(c.id); return; }
+      const liste = [], drin = new Set(), nein = new Set();
+      const suche = (stufenListe, anzahl) => {
+        for (const st of stufenListe) {
+          const alle = ersatzKandidaten(plan, D, st.teilen ? null : vergeben, st.weit);
+          for (const radius of [30, 50, 80]) {
+            const cands = alle.filter(c => !drin.has(c.id) && !nein.has(c.id) && km(s, c) <= radius).sort((a, b) => b.urg / (1 + km(s, b) / 10) - a.urg / (1 + km(s, a) / 10));
+            for (const c of cands.slice(0, 25)) {
+              const seq = D.stops.slice(); seq[i] = c.id;
+              if (!passt(seq)) { nein.add(c.id); continue; }
+              liste.push({ id: c.id, km: km(s, c), geteilt: vergeben.has(c.id), weit: st.weit && !el(c) }); drin.add(c.id);
+              if (liste.length >= anzahl) return;
+            }
           }
         }
-      }
+      };
+      suche(stufen, 1); if (!liste.length) return;
+      vergeben.add(liste[0].id);
+      suche(liste[0].weit ? weitere.slice(1) : weitere, MAX_ALT);
+      res[id] = liste;
     });
   }
   return res;
