@@ -13,60 +13,13 @@ const SPALTEN = [
 ];
 const BEKANNT = new Set(SPALTEN.map(s => s[0]));
 // Früher vom Programm benutzte Spalten: werden nicht mehr gelesen und fallen beim nächsten Speichern weg
-// („Lage (Breite, Länge)“ – genaue Lage aus der Adresse, am 2026-10-12 wieder entfernt).
+// („Lage (Breite, Länge)“ – genaue Lage aus der Adresse, am 2026-10-12 wieder entfernt;
+//  „Kollektion …“ – verkaufte Kollektionen je Kunde, am 2026-10-17 wieder entfernt).
 const ENTFERNT = new Set(["Lage (Breite, Länge)"]);
+export const spalteEntfernt = s => { const t = String(s ?? "").trim(); return ENTFERNT.has(t) || /^Kollektion\s+\S/i.test(t); };
 // Eigene Spalten, die in der Kundenliste angelegt wurden (nicht vom Programm vorgegeben, keine Umsatz-Spalte)
-export const eigeneSpalten = spalten => (spalten || []).filter(s => !BEKANNT.has(s) && !ENTFERNT.has(s) && !umsatzJahr(s));
+export const eigeneSpalten = spalten => (spalten || []).filter(s => !BEKANNT.has(s) && !spalteEntfernt(s) && !umsatzJahr(s));
 export const spalteBekannt = s => BEKANNT.has(s);
-// Kollektionen (Wunsch 2026-10-16): eigene Spalten „Kollektion <Name>“, Wert = Verkaufsdatum (JJJJ-MM-TT) oder „ja“ (ohne Datum)
-export const kollektionName = s => { const m = String(s ?? "").trim().match(/^Kollektion\s+(\S.*)$/i); return m ? m[1].trim() : null; };
-export const kollektionSpalten = spalten => eigeneSpalten(spalten).filter(s => kollektionName(s));
-// Wert einer Kollektions-Spalte -> null (nicht verkauft) oder { datum: "JJJJ-MM-TT" bzw. "" }
-export const kollektionWert = v => { const s = txt(v); return !s || /^(nein|n|0|falsch|false)$/i.test(s) ? null : { datum: datum(s) }; };
-
-// Kollektionsliste einlesen (Wunsch 2026-10-16), z. B. Rechnungsliste einer Kollektion: je Zeile Kundennummer und Datum.
-// Ergebnis: { zeilen: [{ id, datum, name, ort }], vorschlag: Name der Kollektion aus dem Artikel bzw. Dateinamen }
-const istKdSpalte = s => /^(kd\.?\s*-?\s*nr\.?|kunden\s*-?\s*nr\.?|kundennummer|kunde\s*-?\s*nr\.?)$/i.test(txt(s));
-const listenDatum = v => {
-  if (v instanceof Date || typeof v === "number") return datum(v);
-  const s = txt(v), m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/); // amerikanisch: Monat/Tag/Jahr
-  if (m) return (m[3].length === 2 ? "20" + m[3] : m[3]) + "-" + m[1].padStart(2, "0") + "-" + m[2].padStart(2, "0");
-  return datum(s.split(" ")[0]);
-};
-export function kollektionslisteLesen(XLSX, daten, dateiname = "") {
-  const wb = XLSX.read(daten, { type: "array", cellDates: true });
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" });
-  const k = rows.slice(0, 15).findIndex(r => r.some(istKdSpalte));
-  if (k < 0) throw new Error("In der Liste fehlt eine Spalte „Kundennr.“ bzw. „Kd Nr.“");
-  const kopf = rows[k].map(txt), sp = re => kopf.findIndex(s => re.test(s));
-  const iKd = kopf.findIndex(istKdSpalte), iDat = sp(/datum/i), iName = sp(/^name\s*1?$/i), iOrt = sp(/^ort$/i), iArt = sp(/^artikel$/i);
-  const zeilen = [];
-  for (const r of rows.slice(k + 1)) {
-    const id = txt(r[iKd]).replace(/\.0+$/, ""); if (!id) continue;
-    zeilen.push({ id, datum: iDat >= 0 ? listenDatum(r[iDat]) : "", name: iName >= 0 ? txt(r[iName]) : "", ort: iOrt >= 0 ? txt(r[iOrt]) : "", artikel: iArt >= 0 ? txt(r[iArt]) : "" });
-  }
-  const art = (zeilen.find(z => z.artikel) || {}).artikel || "";
-  const m = art.match(/"([^"]+)"/) || art.match(/koll(?:ektion)?\.?\s+(.+)$/i) || String(dateiname).replace(/\.[a-z]+$/i, "").match(/koll(?:ektion)?\.?\s+(.+)$/i);
-  return { zeilen, vorschlag: m ? m[1].trim() : "" };
-}
-// Abgleich mit den Kunden: je Kunde zählt das früheste Datum der Liste; ein schon eingetragenes früheres Datum bleibt
-export function kollektionAbgleich(zeilen, kunden, spalte) {
-  const kd = new Map(kunden.map(k => [String(k.id), k])), erste = new Map();
-  for (const z of zeilen) { const g = erste.get(z.id); if (!g || (z.datum && (!g.datum || z.datum < g.datum))) erste.set(z.id, z); }
-  const neu = [], frueher = [], schon = [], fehlt = [];
-  for (const z of erste.values()) {
-    const k = kd.get(z.id); if (!k) { fehlt.push(z); continue; }
-    const w = kollektionWert((k.extra || {})[spalte]);
-    if (!w) neu.push({ k, datum: z.datum });
-    else if (z.datum && (!w.datum || z.datum < w.datum)) frueher.push({ k, datum: z.datum, alt: w.datum });
-    else schon.push({ k, datum: w.datum });
-  }
-  return { neu, frueher, schon, fehlt, zeilen: zeilen.length };
-}
-export function kollektionAnwenden(abgl, spalte) {
-  for (const x of abgl.neu.concat(abgl.frueher)) x.k.extra = { ...(x.k.extra || {}), [spalte]: x.datum || "ja" };
-  return abgl.neu.length + abgl.frueher.length;
-}
 // Umsatz-Spalten werden am Namen erkannt: "Umsatz 25", "Umsatz 26", "Umsatz 2027" … -> Jahr
 export const umsatzJahr = name => { const m = String(name).trim().match(/^Umsatz\s*(\d{2}|\d{4})$/i); return m ? (m[1].length === 2 ? 2000 + +m[1] : +m[1]) : null; };
 // Reihenfolge der Spalten, wenn die Datei keine vorgibt (wie im bisherigen Stand)
@@ -78,6 +31,7 @@ export function kundenNormalisieren(kunden) {
     if (!k.ums) { k.ums = {}; if ("u25" in k) k.ums[2025] = k.u25 || 0; if ("u24" in k) k.ums[2024] = k.u24 || 0; }
     delete k.u25; delete k.u24;
     if (!k.extra) k.extra = {};
+    for (const s of Object.keys(k.extra)) if (spalteEntfernt(s)) delete k.extra[s]; // entfernte Spalten (z. B. „Kollektion …“)
     if (!k.pnotes) k.pnotes = []; // private Notizen (eigene Spalte, seit 2026-10-09)
   }
   return kunden;
@@ -129,7 +83,7 @@ export function leseStand(XLSX, daten) {
   const zeilen = XLSX.utils.sheet_to_json(blatt, { defval: "" });
   if (!zeilen.length || !("Name1" in zeilen[0])) throw new Error("Die Datei sieht nicht wie eine Kundenliste aus (Spalte „Name1“ fehlt)");
   // Spalten in der Reihenfolge der Datei (auch eigene Spalten, die das Programm nicht kennt)
-  const spalten = (XLSX.utils.sheet_to_json(blatt, { header: 1, range: 0 })[0] || []).map(s => txt(s)).filter(Boolean);
+  const spalten = (XLSX.utils.sheet_to_json(blatt, { header: 1, range: 0 })[0] || []).map(s => txt(s)).filter(s => s && !spalteEntfernt(s));
   const eigene = eigeneSpalten(spalten);
   const umsSpalten = spalten.filter(s => umsatzJahr(s));
   const wert = v => v instanceof Date ? datum(v) : v; // Datum als Text speichern
@@ -236,7 +190,7 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
   const wb = XLSX.utils.book_new();
   kundenNormalisieren(kunden);
   // Spalten: Reihenfolge wie in der Datei; fehlende bekannte, Umsatz- und eigene Spalten hinten anhängen
-  const kopf = (spalten && spalten.length ? spalten : STANDARD_REIHENFOLGE).slice();
+  const kopf = (spalten && spalten.length ? spalten : STANDARD_REIHENFOLGE).filter(s => !spalteEntfernt(s));
   const dazu = s => { if (!kopf.includes(s)) kopf.push(s); };
   // fehlende Programm-Spalten direkt hinter ihre Vorgängerin setzen (z. B. „Private Notizen“ hinter „Notizen“)
   SPALTEN.forEach((s, i) => { if (kopf.includes(s[0])) return; const vor = i ? kopf.indexOf(SPALTEN[i - 1][0]) : -1; if (vor >= 0) kopf.splice(vor + 1, 0, s[0]); else dazu(s[0]); });

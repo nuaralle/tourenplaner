@@ -2,7 +2,7 @@
 import { HOME, WD, WDS, DEFAULTS, tmin, hhmm, iso, parseISO, addDays, fmtD, eur, today, esc, luftlinie, hotelOrt } from "./grundlagen.js";
 import * as P from "./planung.js";
 import { PLZ } from "./plz.js";
-import { leseStand, schreibeStand, kundenNormalisieren, umsatzJahre, umsatzJahr, eigeneSpalten, spalteBekannt, kollektionName, kollektionSpalten, kollektionWert, kollektionslisteLesen, kollektionAbgleich, kollektionAnwenden, STANDARD_REIHENFOLGE, kundenlisteLesen, abgleichVorschlag, abgleichAnwenden, stammName } from "./excel.js";
+import { leseStand, schreibeStand, kundenNormalisieren, umsatzJahre, umsatzJahr, eigeneSpalten, spalteBekannt, spalteEntfernt, STANDARD_REIHENFOLGE, kundenlisteLesen, abgleichVorschlag, abgleichAnwenden, stammName } from "./excel.js";
 import * as Sp from "./speicher.js";
 import * as G from "./google.js";
 import * as F from "./fahrzeiten.js";
@@ -502,8 +502,7 @@ function drawMap() {
 /* ---------- Eigene Spalten der Kundenliste ---------- */
 // Spaltenarten: { "Deko Kunde": "jn" } – "jn" = Häkchen (in Excel "ja" oder leer), sonst Text
 const istJa = v => v === true || /^(ja|x|1|wahr|true)$/i.test(String(v ?? "").trim());
-const eigene = () => eigeneSpalten(DATA.spalten).filter(s => !kollektionName(s)); // Kollektionen haben einen eigenen Bereich
-const kollektionen = () => kollektionSpalten(DATA.spalten);
+const eigene = () => eigeneSpalten(DATA.spalten);
 const istHaekchen = s => (DATA.spaltenArten || {})[s] === "jn";
 const haekchenSpalten = () => eigene().filter(istHaekchen);
 const merkmaleKurz = c => haekchenSpalten().filter(s => istJa((c.extra || {})[s])).map(s => ` · <b class="termin">${esc(s)}</b>`).join("");
@@ -525,92 +524,6 @@ function spalteHinzufuegen() {
   toast("Spalte „" + name + "“ angelegt – sie wird mit der nächsten Speicherung in die Excel-Datei übernommen");
 }
 
-/* ---------- Kollektionen (Wunsch 2026-10-16): verkaufte Kollektionen je Kunde per Häkchen, mit Datum ---------- */
-const kollDatumText = w => !w ? "" : w.datum ? " · verkauft am " + fmtD(w.datum) : " · verkauft";
-// Kundenansicht: Antippen trägt sofort ein (Datum heute), Austragen nur mit Rückfrage
-function kollektionenHTML(c) {
-  const L = kollektionen();
-  if (!L.length) return `<h4>Kollektionen verkauft</h4><p class="muted">Noch keine Kollektionen angelegt – unter Einstellungen › Kollektionen eintragen.</p>`;
-  return `<h4>Kollektionen verkauft</h4><div class="koll">${L.map(s => { const w = kollektionWert((c.extra || {})[s]);
-    return `<label class="chk"><input type="checkbox" data-koll="${esc(s)}" data-id="${esc(c.id)}" ${w ? "checked" : ""}><span>${esc(kollektionName(s))}<span class="muted kdat">${kollDatumText(w)}</span></span></label>`; }).join("")}</div>`;
-}
-// „Besuch erfassen“: nur Kollektionen, die der Kunde noch nicht hat; Datum = Besuchsdatum
-function kollektionenBesuchHTML(c) {
-  const L = kollektionen(); if (!L.length) return "";
-  const hat = s => kollektionWert((c.extra || {})[s]), offen = L.filter(s => !hat(s)), schon = L.filter(hat);
-  return `<div class="koll"><span class="kt">Kollektionen verkauft</span>${offen.map(s => `<label class="chk"><input type="checkbox" class="vkoll" value="${esc(s)}"><span>${esc(kollektionName(s))}</span></label>`).join("")}
-    ${schon.length ? `<p class="muted">Schon eingetragen: ${schon.map(s => esc(kollektionName(s)) + (hat(s).datum ? " (" + fmtD(hat(s).datum) + ")" : "")).join(", ")}</p>` : ""}</div>`;
-}
-function kollektionSetzen(t) {
-  const k = roh(t.dataset.id), s = t.dataset.koll, name = kollektionName(s); if (!k) return;
-  if (t.checked) k.extra = { ...(k.extra || {}), [s]: today() };
-  else {
-    if (!confirm(`„${name}“ bei ${k.n1} wieder austragen?`)) { t.checked = true; return; }
-    const { [s]: weg, ...rest } = k.extra || {}; k.extra = rest;
-  }
-  const d = t.closest("label").querySelector(".kdat"); if (d) d.textContent = kollDatumText(kollektionWert(k.extra[s]));
-  geaendert(); toast(t.checked ? `${name} bei ${k.n1} eingetragen (${fmtD(today())})` : `${name} bei ${k.n1} ausgetragen`);
-}
-// Einstellungen: neue Kollektion = neue Excel-Spalte „Kollektion <Name>“ (hinten angehängt)
-function kollektionHinzufuegen() {
-  const name = ($("#kollname").value || "").trim().replace(/\s+/g, " ").replace(/^kollektion\s+/i, "");
-  if (!name) { toast("Bitte einen Namen für die Kollektion eingeben"); return; }
-  const spalte = "Kollektion " + name;
-  const spalten = DATA.spalten && DATA.spalten.length ? DATA.spalten : STANDARD_REIHENFOLGE.slice();
-  if (spalten.some(s => s.toLowerCase() === spalte.toLowerCase())) { toast("Die Kollektion „" + name + "“ gibt es schon"); return; }
-  spalten.push(spalte); DATA.spalten = spalten; persist(); render();
-  toast("Kollektion „" + name + "“ angelegt");
-}
-// Kollektionsliste einlesen: Vorschau, dann Übernehmen (vorher Sicherung in Google Drive)
-let KOLLL = null; // { datei, zeilen, vorschlag }
-async function kollListeStarten(datei) {
-  const r = kollektionslisteLesen(XLSX, await datei.arrayBuffer(), datei.name);
-  if (!r.zeilen.length) { toast("In der Liste stehen keine Kundennummern"); return; }
-  KOLLL = { datei: datei.name, ...r };
-  kollListeDialog();
-}
-function kollListeDialog(wahl) {
-  const L = kollektionen(), v = KOLLL.vorschlag.toLowerCase();
-  const passend = v ? L.find(s => kollektionName(s).toLowerCase() === v) || L.find(s => { const n = kollektionName(s).toLowerCase(); return n.includes(v) || v.includes(n); }) : null;
-  const neuName = v && !passend ? KOLLL.vorschlag.charAt(0).toUpperCase() + KOLLL.vorschlag.slice(1).toLowerCase() : "";
-  wahl = wahl || passend || (neuName ? "neu:" + neuName : L[0] || "");
-  const spalte = wahl.startsWith("neu:") ? "Kollektion " + wahl.slice(4) : wahl;
-  const a = spalte ? kollektionAbgleich(KOLLL.zeilen, DATA.kunden, spalte) : { neu: [], frueher: [], schon: [], fehlt: [], zeilen: KOLLL.zeilen.length };
-  const n = a.neu.length + a.frueher.length;
-  dlg(`<header class="dh"><h3>Kollektionsliste einlesen</h3><button value="x" class="ghost">Abbrechen</button></header>
-   <p class="muted">${esc(KOLLL.datei)} · ${a.zeilen} Zeilen</p>
-   ${L.length || neuName ? `<label>Kollektion<select id="kollwahl">${L.map(s => `<option value="${esc(s)}" ${s === wahl ? "selected" : ""}>${esc(kollektionName(s))}</option>`).join("")}${neuName ? `<option value="neu:${esc(neuName)}" ${wahl === "neu:" + neuName ? "selected" : ""}>„${esc(neuName)}“ neu anlegen</option>` : ""}</select></label>`
-     : `<p class="warn">Es ist noch keine Kollektion angelegt – bitte zuerst unter Einstellungen › Kollektionen anlegen.</p>`}
-   <ul class="kollerg"><li><b>${a.neu.length}</b> Kunden werden eingetragen (Datum aus der Liste)</li>
-   ${a.frueher.length ? `<li><b>${a.frueher.length}</b> schon eingetragene Kunden bekommen das frühere Datum aus der Liste</li>` : ""}
-   ${a.schon.length ? `<li><b>${a.schon.length}</b> sind schon eingetragen und bleiben, wie sie sind</li>` : ""}
-   ${a.fehlt.length ? `<li><b>${a.fehlt.length}</b> ${a.fehlt.length === 1 ? "Kundennummer steht" : "Kundennummern stehen"} nicht in Ihrer Kundenliste: ${a.fehlt.slice(0, 30).map(z => esc(z.id) + (z.name ? " " + esc(z.name) : "") + (z.ort ? " (" + esc(z.ort) + ")" : "")).join(", ")}${a.fehlt.length > 30 ? " …" : ""}</li>` : ""}</ul>
-   <div class="row"><button class="pri" value="kolllisteok" data-wahl="${esc(wahl)}" ${n ? "" : "disabled"}>Übernehmen</button></div>`);
-}
-async function kollListeAnwenden(wahl) {
-  if (!KOLLL || !wahl) return;
-  // vorher den bisherigen Stand sichern (wie beim Kundenlisten-Abgleich)
-  if (driveBereit()) {
-    try { toast("Sicherung wird angelegt …"); await sicherungAnlegen("vor_Kollektionsliste_" + uhrzeitJetzt()); }
-    catch (e) { if (!confirm("Die Sicherung in Google Drive hat nicht geklappt (" + e.message + "). Liste trotzdem übernehmen?")) return; }
-  } else if (!confirm("Keine Verbindung zu Google Drive – vorher wird keine Sicherung angelegt. Liste trotzdem übernehmen?")) return;
-  let spalte = wahl;
-  if (wahl.startsWith("neu:")) {
-    spalte = "Kollektion " + wahl.slice(4);
-    const sp = DATA.spalten && DATA.spalten.length ? DATA.spalten : STANDARD_REIHENFOLGE.slice();
-    if (!sp.some(s => s.toLowerCase() === spalte.toLowerCase())) sp.push(spalte); DATA.spalten = sp;
-  }
-  const a = kollektionAbgleich(KOLLL.zeilen, DATA.kunden, spalte), n = kollektionAnwenden(a, spalte);
-  KOLLL = null; geaendert();
-  toast(`${kollektionName(spalte)}: bei ${n} Kunden eingetragen` + (a.fehlt.length ? ` · ${a.fehlt.length} nicht in der Kundenliste` : ""));
-}
-function kollektionEntfernen(s) {
-  const name = kollektionName(s), n = DATA.kunden.filter(k => kollektionWert((k.extra || {})[s])).length;
-  if (!confirm(`Kollektion „${name}“ entfernen?` + (n ? ` Sie ist bei ${n} Kunden eingetragen – diese Einträge werden gelöscht.` : ""))) return;
-  DATA.spalten = (DATA.spalten || []).filter(x => x !== s);
-  for (const k of DATA.kunden) if (k.extra && s in k.extra) { const { [s]: weg, ...rest } = k.extra; k.extra = rest; }
-  geaendert(); toast("Kollektion „" + name + "“ entfernt");
-}
 
 /* ---------- Kundenliste ---------- */
 // Kommender Termin eines Kunden (vergangene werden nicht angezeigt)
@@ -655,16 +568,15 @@ function auswertungDaten() {
 function renderAuswertung() {
   const { zr, L } = auswertungDaten(), gruppen = A.nachKunde(L);
   const zahl = a => L.filter(n => n.art === a).length;
-  const worte = A.stichworte(L), KO = A.kollektionen(DATA.kunden, kollektionen(), zr);
+  const worte = A.stichworte(L);
   return `<div class="listhead"><div><h2>Auswertung der Notizen</h2><p class="muted">Nur geschäftliche Notizen, über alle Kunden. Private Notizen werden nicht ausgewertet.</p></div>
-   <div class="row"><button data-a="auswexport" ${L.length || KO.some(x => x.imZeitraum.length) ? "" : "disabled"}>Als Excel speichern</button></div></div>
+   <div class="row"><button data-a="auswexport" ${L.length ? "" : "disabled"}>Als Excel speichern</button></div></div>
    <div class="filters ausw"><label>Zeitraum<select id="azr">${A.ZEITRAEUME.map(([v, l]) => `<option value="${v}" ${AUSW.zr === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
    ${AUSW.zr === "frei" ? `<label>von<input type="date" id="avon" value="${esc(AUSW.von)}"></label><label>bis<input type="date" id="abis" value="${esc(AUSW.bis || today())}"></label>` : ""}
    <label>Suchen (Wort, Kunde oder Ort)<input type="search" id="aq" value="${esc(AUSW.q)}" placeholder="z. B. Muster, Angebot, Kollektion"></label></div>
    <p class="muted">${zr.von ? fmtD(zr.von) : "Anfang"} bis ${fmtD(zr.bis)}</p>
    <div class="kacheln"><div><b>${zahl("Besuchsnotiz")}</b><span>Besuchsnotizen</span></div><div><b>${gruppen.length}</b><span>Kunden mit Notizen</span></div>
    <div><b>${zahl("Bestellformular")}</b><span>Bestellformulare</span></div><div><b>${zahl("Beanstandung")}</b><span>Beanstandungen</span></div></div>
-   ${KO.length ? `<h4>Kollektionen verkauft (Kunden im Zeitraum)</h4><div class="kacheln">${KO.map(x => `<div><b>${x.imZeitraum.length}</b><span>${esc(x.name)} · insgesamt ${x.gesamt}</span></div>`).join("")}</div>` : ""}
    ${worte.length ? `<h4>Häufige Stichworte</h4><div class="worte">${worte.map(([w, n]) => `<button data-a="awort" data-w="${esc(w)}" class="${AUSW.q.toLowerCase() === w ? "an" : ""}">${esc(w)} <small>${n}</small></button>`).join("")}</div>` : ""}
    ${L.length ? gruppen.map(([k, N]) => `<section class="ausk"><h4><button class="link" data-a="open" data-id="${esc(k.id)}">${esc(k.n1)}</button> <span class="muted">${esc(k.plz)} ${esc(k.ort)} · ${N.length} ${N.length === 1 ? "Notiz" : "Notizen"}</span></h4>
      <ul class="notes">${N.map(n => `<li><time>${fmtD(n.d)}${n.art !== "Besuchsnotiz" ? " · " + n.art : ""}</time>${esc(n.t)}</li>`).join("")}</ul></section>`).join("")
@@ -676,14 +588,6 @@ function auswertungExport() {
   const wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(rows, { header: ["Datum", "Kd Nr.", "Kunde", "PLZ", "Ort", "Art", "Notiz"] });
   ws["!cols"] = [{ wch: 11 }, { wch: 9 }, { wch: 32 }, { wch: 7 }, { wch: 18 }, { wch: 15 }, { wch: 90 }];
   XLSX.utils.book_append_sheet(wb, ws, "Notizen");
-  // zweites Blatt: verkaufte Kollektionen im Zeitraum
-  const KO = A.kollektionen(DATA.kunden, kollektionen(), zr);
-  if (KO.length) {
-    const kr = KO.flatMap(x => x.imZeitraum.map(v => ({ "Kollektion": x.name, "Datum": fmtD(v.d), "Kd Nr.": vorlaeufig(v.k.id) ? "" : v.k.id, "Kunde": v.k.n1, "PLZ": v.k.plz, "Ort": v.k.ort })));
-    const wk = XLSX.utils.json_to_sheet(kr, { header: ["Kollektion", "Datum", "Kd Nr.", "Kunde", "PLZ", "Ort"] });
-    wk["!cols"] = [{ wch: 22 }, { wch: 11 }, { wch: 9 }, { wch: 32 }, { wch: 7 }, { wch: 18 }];
-    XLSX.utils.book_append_sheet(wb, wk, "Kollektionen");
-  }
   const name = `Notizen_Auswertung_${zr.von || "Anfang"}_bis_${zr.bis}.xlsx`;
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([XLSX.write(wb, { type: "array", bookType: "xlsx" })], { type: XLSX_TYP }));
   a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
@@ -739,13 +643,6 @@ function renderSettings() {
    <label>Art<select id="spart"><option value="jn">Häkchen (ja/nein)</option><option value="text">Text</option></select></label>
    <button data-a="spalteneu">Spalte hinzufügen</button>
    <p class="muted">„Umsatz 26“, „Umsatz 27“ … werden automatisch als Umsatz-Spalte erkannt und vor die älteren Umsatz-Spalten gestellt.</p></fieldset>
-  <fieldset><legend>Kollektionen</legend>
-   <p class="muted">${kollektionen().length ? "Vorhanden: " + kollektionen().map(s => esc(kollektionName(s))).join(", ") + "." : "Noch keine Kollektionen."} Verkaufte Kollektionen tragen Sie beim Kunden per Häkchen ein (mit Datum), auch bei „Besuch erfassen“. In Excel hat jede Kollektion eine eigene Spalte „Kollektion …“.</p>
-   <label>Neue Kollektion<input id="kollname" placeholder="Name der Kollektion" autocomplete="off"></label>
-   <button data-a="kollneu">Kollektion hinzufügen</button>
-   ${kollektionen().length ? `<div class="row wrap">${kollektionen().map(s => `<button class="ghost" data-a="kollweg" data-koll="${esc(s)}">„${esc(kollektionName(s))}“ entfernen</button>`).join("")}</div>` : ""}
-   <label>Kollektionsliste einlesen (Excel mit Kundennummer und Datum, z. B. Rechnungsliste einer Kollektion)<input type="file" id="kolllistefile" accept=".xlsx,.xls,.csv"></label>
-   <p class="muted">Die App zeigt vorher, bei welchen Kunden die Kollektion mit welchem Datum eingetragen wird. Kundennummern, die nicht in Ihrer Kundenliste stehen, werden nur aufgelistet.</p></fieldset>
   <fieldset><legend>Daten</legend>
    <p class="muted">Stand: ${esc(DATA.quelle || "–")}${G.konfiguriert() ? "" : `<br>Gespeichert auf diesem Gerät.${DATA.ungesichert ? ` <span class="warn">Es gibt Änderungen, die noch nicht als Excel gesichert sind.</span>` : ""}`}</p>
    ${G.konfiguriert() ? `<p class="muted">Sicherungen: einmal pro Woche und vor jedem Kundenlisten-Abgleich in Google Drive › ${G.ORDNER} › ${G.SICHERUNG_ORDNER}. Letzte Sicherung: ${DATA.sicherung ? fmtD(DATA.sicherung) : "noch keine"}.</p>
@@ -823,11 +720,10 @@ function openCustomer(id) {
    <dt>E-Mail</dt><dd>${c.mail ? `<a href="mailto:${esc(c.mail)}">${esc(c.mail)}</a>` : "–"}</dd>
    <dt>Ansprechpartner</dt><dd>${esc(c.ap || "–")}${c.pos ? " (" + esc(c.pos) + ")" : ""}${c.dk ? " · " + telLink(c.dk) : ""}</dd>
    <dt>Öffnungszeiten</dt><dd>${esc(c.oh || "unbekannt")}${c.oh && !c.ohp.known ? `<br><span class="warn">Kann vom Programm nicht gelesen werden – geplant wird mit Mo–Fr 8–18 Uhr. Bitte z. B. so schreiben: Mo-Fr 9-12 und 14:30-18 Uhr</span>` : ""}</dd>
-   <dt>Umsatz</dt><dd>${Object.keys(c.ums || {}).sort().reverse().map(j => j + ": " + eur(c.ums[j])).join(" · ") || "–"}</dd>${trendLang(c)}${Object.entries(c.extra || {}).filter(([k]) => !kollektionName(k)).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
+   <dt>Umsatz</dt><dd>${Object.keys(c.ums || {}).sort().reverse().map(j => j + ": " + eur(c.ums[j])).join(" · ") || "–"}</dd>${trendLang(c)}${Object.entries(c.extra || {}).filter(([k]) => !spalteEntfernt(k)).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
    <dt>Besuch</dt><dd>Letzter: ${fmtD(c.lv)} · Dauer ${P.dauer(c)} Min. · ${c.dHome != null ? Math.round(c.dHome) + " km ab Bremen" : "Lage unbekannt"}</dd>
    <dt>Termin</dt><dd>${tf ? `<b class="termin">${terminText(tf)}</b>${terminHinweis(c, tf.date, tf.time) ? `<br><span class="warn">${esc(terminHinweis(c, tf.date, tf.time))}</span>` : ""}<br>${wocheKnopf(tf.date, "link small")}` : "kein Termin vereinbart"}</dd></dl>
    ${c.planHold ? `<p class="warn">Wird nicht automatisch eingeplant. <button type="button" class="link small" data-a="unhold" data-id="${c.id}">Wieder einplanen</button></p>` : ""}
-   ${kollektionenHTML(c)}
    <h4>Notizen</h4>${notizListe(c, "notes") || `<p class="muted">Noch keine Notizen.</p>`}
    <h4>Private Notizen</h4>${notizListe(c, "pnotes") || `<p class="muted">Noch keine privaten Notizen.</p>`}
    <div class="row wrap"><button value="edit" data-id="${c.id}">Bearbeiten</button><button value="bestwahl" data-id="${c.id}">Bestellformular</button><button value="bfform" data-id="${c.id}">Beanstandung</button>
@@ -1036,7 +932,6 @@ function visitDialog(id) {
    <label>Datum<input type="date" id="vd" value="${today()}"></label>
    <label>Geschäftliche Notiz<textarea id="vt" rows="5" placeholder="Was wurde besprochen? Muster, Angebote, nächste Schritte …"></textarea></label>
    <label>Private Notiz<textarea id="vp" rows="3" placeholder="Persönliches, z. B. Familie, Hobbys, Urlaub …"></textarea></label>
-   ${kollektionenBesuchHTML(c)}
    <div class="row">${SR ? `<button type="button" id="mic" class="mic" aria-pressed="false">Diktieren</button><span id="micst" class="muted" aria-live="polite"></span>` : `<span class="hint">Zum Diktieren ins gewünschte Notizfeld tippen und auf das Mikrofon der Tastatur drücken.</span>`}</div>
    <div class="row"><button class="pri" value="savevisit" data-id="${id}">Besuch speichern</button></div>`);
   if (SR) {
@@ -1189,7 +1084,6 @@ function dlgAktion(v, btn) {
   if (v === "edit") { editDialog(id); return; }
   if (v === "appt") { terminDialog(id); return; }
   if (v === "tagabspeichern") { tagAbschliessen(btn.dataset.week, +btn.dataset.d); return; }
-  if (v === "kolllisteok") { kollListeAnwenden(btn.dataset.wahl).catch(e => { console.error(e); toast("Fehler: " + e.message); }); return; }
   if (v === "abglspeichern") { abgleichUebernehmen().catch(e => { console.error(e); toast("Fehler: " + e.message); }); return; }
   if (v === "saveappt") { terminSpeichern(id); return; }
   if (v === "delappt") {
@@ -1200,10 +1094,7 @@ function dlgAktion(v, btn) {
     const t = $("#vt").value.trim(), p = $("#vp").value.trim(), dt = $("#vd").value || today(); const k = roh(id);
     k.notes = (k.notes || []).concat(t ? [{ d: dt, t }] : []); k.pnotes = (k.pnotes || []).concat(p ? [{ d: dt, t: p }] : []);
     if (!k.lv || dt > k.lv) k.lv = dt;
-    // angekreuzte Kollektionen: Verkaufsdatum = Besuchsdatum
-    const koll = [...document.querySelectorAll("#dlg .vkoll:checked")].map(x => x.value);
-    if (koll.length) k.extra = { ...(k.extra || {}), ...Object.fromEntries(koll.map(s => [s, dt])) };
-    geaendert(); toast("Besuch gespeichert" + (koll.length ? " · " + koll.map(kollektionName).join(", ") + " eingetragen" : ""));
+    geaendert(); toast("Besuch gespeichert");
   }
   if (v === "addtour") {
     const di = +$("#addday").value; const D = PL.days[di];
@@ -1611,8 +1502,6 @@ document.addEventListener("click", async e => {
     if (a === "wzeigen") { DATA.plan = planVon(b.dataset.week) || DATA.plan; persist(false); render(); scrollTo(0, 0); }
     if (a === "heute") { const el = document.getElementById("tag-" + today()); if (el) el.scrollIntoView({ block: "start" }); }
     if (a === "spalteneu") spalteHinzufuegen();
-    if (a === "kollneu") kollektionHinzufuegen();
-    if (a === "kollweg") kollektionEntfernen(b.dataset.koll);
     if (a === "woche") { if ($("#dlg").open) $("#dlg").close(); wocheAnsehen(b.dataset.datum); }
     if (a === "open") openCustomer(b.dataset.id);
     if (a === "naehe") naeheDialog();
@@ -1662,13 +1551,7 @@ document.addEventListener("change", async e => {
   if (t.id === "fdue") { FILTER.due = t.checked; render(); }
   if (t.id === "foh") { FILTER.ohneOh = t.checked; render(); }
   if (t.id === "ftrend") { FILTER.trend = t.checked; render(); }
-  if (t.dataset.koll && t.type === "checkbox") kollektionSetzen(t);
   if (t.id === "wk" && $("#main #ovwahl") && (!PLAN() || t.value !== PLAN().week)) $("#main #ovwahl").value = ""; // neue Woche: Übernachtung neu wählen
-  if (t.id === "kolllistefile" && t.files[0]) {
-    try { await kollListeStarten(t.files[0]); } catch (err) { console.error(err); toast("Liste konnte nicht gelesen werden: " + err.message); }
-    t.value = "";
-  }
-  if (t.id === "kollwahl") kollListeDialog(t.value);
   if (t.id === "abglfile" && t.files[0]) {
     try { await abgleichStarten(t.files[0]); } catch (err) { console.error(err); toast("Liste konnte nicht gelesen werden: " + err.message); }
     t.value = "";

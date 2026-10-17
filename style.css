@@ -113,11 +113,6 @@ dialog::backdrop{background:rgba(10,20,24,.5)}
 .alt label.altz input{width:22px;height:22px;min-height:0;padding:0;margin:0;flex:none;accent-color:var(--dc)}
 .alt b{color:var(--ink);font-weight:600}
 .alt .altk{display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem;width:100%;margin-top:.35rem}
-.koll{display:flex;flex-direction:column;margin:.2rem 0 .6rem}
-.koll .kt{font-size:.9rem;color:var(--muted);margin-bottom:.1rem}
-.koll label.chk{min-height:42px;border-bottom:1px solid var(--line);gap:.6rem}
-.koll label.chk input{width:22px;height:22px;flex:none;margin:0;accent-color:var(--acc)}
-.koll .kdat{font-size:.85rem}
 .mk{display:inline-block;font:700 .7rem var(--disp);color:var(--acc);border:1px solid var(--acc);border-radius:3px;padding:0 .3rem;vertical-align:2px}
 .alt button{min-height:44px;padding:.2rem .3rem;font-size:.82rem;font-weight:700;line-height:1.15}
 .start{background:var(--surf);border-radius:10px;padding:1.5rem;max-width:40rem;display:flex;flex-direction:column;gap:.8rem}
@@ -205,4 +200,3 @@ details.filterbox{margin:-.3rem 0 .8rem}details.filterbox[open]>.filters{margin-
  main{padding-bottom:calc(6rem + env(safe-area-inset-bottom,0px))}
  #toast{bottom:calc(5.2rem + env(safe-area-inset-bottom,0px))}
 }
-ul.kollerg{margin:0;padding-left:1.1rem;display:flex;flex-direction:column;gap:.35rem}
