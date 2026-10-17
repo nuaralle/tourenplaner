@@ -326,6 +326,8 @@ function ovGrund(PL) {
 // Auswahl, wann in der geplanten Woche übernachtet wird
 // Kein Standard: bei einer neuen Woche steht „bitte wählen“, die Nacht wird jede Woche selbst gewählt
 const ovAuswahl = wert => `<label>Übernachtung <select id="ovwahl" required><option value="" ${P.ovGueltig(wert) ? "" : "selected"}>– bitte wählen –</option>${P.UEBERNACHTUNG.map(([v, l]) => `<option value="${v}" ${v === wert ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
+// Planung: zwei gleich große Felder, darunter gleich große Knöpfe in einer Reihe (Optik 2026-10-17)
+const planFelder = (woche, ov, knoepfe) => `<div class="planfelder"><label>Woche ab<input type="date" id="wk" value="${woche}"></label>${ovAuswahl(ov)}</div><div class="plankn">${knoepfe}</div>`;
 /* ---------- Tag abschließen ---------- */
 const besucht = (id, datum) => { const k = roh(id); return !!(k && k.lv && k.lv >= datum); };
 // Besuche vergangener Tage, die weder als besucht erfasst noch abgeschlossen sind
@@ -390,7 +392,7 @@ function renderPlan() {
   const ws = PL ? PL.week : iso(P.weekStart());
   if (!P.startBekannt()) return `<section class="empty"><h2>Startadresse fehlt</h2><p>Bitte unter <b>Einstellungen › Tagesablauf</b> Ihre Startadresse (zu Hause) mit PLZ eintragen.</p></section>`;
   if (!PL) return `<section class="empty"><h2>Noch keine Woche geplant</h2><p>Der Planer sucht fällige Kunden heraus, bündelt sie zu Tagestouren und plant eine Übernachtungstour für Gebiete über ${S().overnightKm} km. Freitag bleibt Home-Office.</p>
-    <div class="row"><label>Woche ab <input type="date" id="wk" value="${ws}"></label>${ovAuswahl("")}<button class="pri" data-a="plan">Woche planen</button></div></section>`;
+    ${planFelder(ws, "", `<button class="pri" data-a="plan">Woche planen</button>`)}</section>`;
   const alt = P.alternativen(PL);
   const legs = PL.days.filter(D => D.type !== "home").flatMap(D => P.simDay(D).legs);
   const nGesch = legs.filter(L => L.geschaetzt).length;
@@ -401,7 +403,7 @@ function renderPlan() {
   let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}${+S().ersterMaxKm > 0 ? " · erster Besuch höchstens " + S().ersterMaxKm + " km" : ""}</p></div>
    <div class="planknoepfe">${heuteDa ? `<button class="pri heuteknopf" data-a="heute">${ICON.heute}Heute</button>` : ""}
    <details class="planen" data-auf="planen" ${offenAttr("planen", !handy())}><summary>${ICON.pfeil}Planung ändern</summary>
-   <div class="row"><label>Woche ab <input type="date" id="wk" value="${PL.week}"></label>${ovAuswahl(PL.uebernachtung)}<button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button class="ghost" data-a="wloeschen">Woche löschen</button></div></details></div></div>
+   ${planFelder(PL.week, PL.uebernachtung, `<button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button data-a="wloeschen">Woche löschen</button>`)}</details></div></div>
    ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze der Woche"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
   PL.days.forEach((D, di) => {
     const date = fmtD(D.date);
