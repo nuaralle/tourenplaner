@@ -314,6 +314,7 @@ function bookingUrl(h, date) {
 
 // Warum in der geplanten Woche keine Übernachtung zustande kam
 function ovGrund(PL) {
+  if (PL.uebernachtung === "keine") return PL.days.findIndex(D => D.type !== "frei") >= 3 ? "Die Woche beginnt erst am Donnerstag." : "Die Übernachtung dieser Woche war schon.";
   const wahl = P.ovGueltig(PL.uebernachtung) ? PL.uebernachtung : null;
   const tage = wahl ? wahl.split("-").map(Number) : [0, 1, 2, 3];
   const fx = Object.entries(TERMINE()).map(([id, f]) => ({ c: byId(id), f, di: Math.round((parseISO(f.date) - parseISO(PL.week)) / 864e5) }))
@@ -323,11 +324,33 @@ function ovGrund(PL) {
   if (!wahl && fx.length >= 2) return "An allen möglichen Übernachtungstagen liegen Termine in der Nähe von Bremen.";
   return `Kein passendes Gebiet über ${S().overnightKm} km mit fälligen Kunden gefunden.`;
 }
-// Auswahl, wann in der geplanten Woche übernachtet wird
-// Kein Standard: bei einer neuen Woche steht „bitte wählen“, die Nacht wird jede Woche selbst gewählt
-const ovAuswahl = wert => `<label>Übernachtung <select id="ovwahl" required><option value="" ${P.ovGueltig(wert) ? "" : "selected"}>– bitte wählen –</option>${P.UEBERNACHTUNG.map(([v, l]) => `<option value="${v}" ${v === wert ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
-// Planung: zwei gleich große Felder, darunter gleich große Knöpfe in einer Reihe (Optik 2026-10-17)
-const planFelder = (woche, ov, knoepfe) => `<div class="planfelder"><label>Woche ab<input type="date" id="wk" value="${woche}"></label>${ovAuswahl(ov)}</div><div class="plankn">${knoepfe}</div>`;
+// Übernachtung (Wunsch 2026-10-17): drei Knöpfe Mo → Di, Di → Mi, Mi → Do, immer sichtbar. Im geplanten Wochenplan plant ein
+// Tipp auf eine andere Nacht die Woche nach Rückfrage neu; bei einer neuen Woche und im Fenster wird die Nacht nur ausgewählt.
+// Kein Standard: bei einer neuen Woche ist keine Nacht gewählt. Nächte vor dem Starttag sind nicht wählbar.
+function nachtWahl(wert, abTag, hinweis = "") {
+  if (!hinweis && abTag >= 3) hinweis = "Ab Donnerstag ist keine Übernachtung möglich – es wird nur eine Tagestour geplant.";
+  return `<div class="nachtwahl" role="radiogroup" aria-label="Übernachtung"><span class="nl">Übernachtung</span><div class="nk">${P.UEBERNACHTUNG.map(([v, l]) => {
+    const geht = !hinweis && P.ovMoeglich(v, abTag), an = geht && v === wert;
+    return `<label class="${an ? "an" : ""}${geht ? "" : " aus"}"><input type="radio" name="ovwahl" value="${v}" ${an ? "checked" : ""} ${geht ? "" : "disabled"}>${l}</label>`; }).join("")}</div>${hinweis ? `<span class="hinweis">${esc(hinweis)}</span>` : ""}</div>`;
+}
+const wocheAbFeld = woche => `<div class="planfelder einzeln"><label>Woche ab<input type="date" id="wk" value="${woche}"></label></div>`;
+// Vorschlag für „Woche ab“ (Wunsch 2026-10-17): Montag bis Mittwoch heute, sonst der nächste Montag
+const startVorschlag = () => wochentag(today()) <= 2 ? today() : iso(P.weekStart());
+// Datum -> geplante Woche (Montag) und Starttag (0 = Montag); Freitag bis Sonntag zählen zur nächsten Woche,
+// in der laufenden Woche wird frühestens ab heute geplant
+function startVon(d) {
+  let mon = montag(d), tag = wochentag(d);
+  if (tag >= 4) { mon = iso(addDays(parseISO(mon), 7)); tag = 0; }
+  if (mon === montag(today())) tag = Math.max(tag, wochentag(today()));
+  return { mon, tag };
+}
+// Starttag einer geplanten Woche als Datum für das Feld (erster nicht freie Tag, in der laufenden Woche frühestens heute)
+const planStart = PL => iso(addDays(parseISO(PL.week), Math.max(0, PL.days.findIndex(D => D.type !== "frei"), PL.week === montag(today()) ? Math.min(3, wochentag(today())) : 0)));
+// Tag 1 oder 2 einer Übernachtung liegt schon in der Vergangenheit: die Übernachtung dieser Woche war schon
+const ovErledigt = PL => PL.days.find(D => D.date < today() && (D.type === "ov1" || D.type === "ov2") && D.stops.length);
+const ovErledigtText = PL => { const D = ovErledigt(PL); return D ? `Die Übernachtung dieser Woche war schon (${WD[D.day]}).` : ""; };
+// gewählte Nacht (Knöpfe im Wochenplan bzw. im Fenster)
+const gewaehlteNacht = (bereich = "#main") => (document.querySelector(`${bereich} input[name="ovwahl"]:checked`) || {}).value || "";
 /* ---------- Tag abschließen ---------- */
 const besucht = (id, datum) => { const k = roh(id); return !!(k && k.lv && k.lv >= datum); };
 // Besuche vergangener Tage, die weder als besucht erfasst noch abgeschlossen sind
@@ -389,10 +412,10 @@ function alternativenHTML(di, c, alts) {
 }
 function renderPlan() {
   const PL = PLAN();
-  const ws = PL ? PL.week : iso(P.weekStart());
   if (!P.startBekannt()) return `<section class="empty"><h2>Startadresse fehlt</h2><p>Bitte unter <b>Einstellungen › Tagesablauf</b> Ihre Startadresse (zu Hause) mit PLZ eintragen.</p></section>`;
-  if (!PL) return `<section class="empty"><h2>Noch keine Woche geplant</h2><p>Der Planer sucht fällige Kunden heraus, bündelt sie zu Tagestouren und plant eine Übernachtungstour für Gebiete über ${S().overnightKm} km. Freitag bleibt Home-Office.</p>
-    ${planFelder(ws, "", `<button class="pri" data-a="plan">Woche planen</button>`)}</section>`;
+  if (!PL) { const ws = startVorschlag();
+    return `<section class="empty"><h2>Noch keine Woche geplant</h2><p>Der Planer sucht fällige Kunden heraus, bündelt sie zu Tagestouren und plant eine Übernachtungstour für Gebiete über ${S().overnightKm} km. Freitag bleibt Home-Office.</p>
+    ${wocheAbFeld(ws)}${nachtWahl("", startVon(ws).tag)}<div class="plankn"><button class="pri" data-a="plan">Woche planen</button></div></section>`; }
   const alt = P.alternativen(PL);
   const legs = PL.days.filter(D => D.type !== "home").flatMap(D => P.simDay(D).legs);
   const nGesch = legs.filter(L => L.geschaetzt).length;
@@ -400,14 +423,19 @@ function renderPlan() {
     : nGesch === legs.length ? "Entfernungen und Fahrzeiten sind noch Schätzungen" : "Fahrzeiten teilweise geschätzt (≈)";
   // „Heute“: springt zum heutigen Tag; die Planungsfelder sind auf dem Handy zugeklappt (Optik 2026-10-16)
   const heuteDa = PL.days.some(D => D.type !== "home" && D.date === today() && D.stops.length);
-  let html = `${wochenReiter()}<div class="planhead"><div><h2>KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}${+S().ersterMaxKm > 0 ? " · erster Besuch höchstens " + S().ersterMaxKm + " km" : ""}</p></div>
+  // Woche ab einem späteren Tag (Wunsch 2026-10-17): erster nicht freier Tag; die Nacht-Knöpfe sind immer sichtbar
+  const s0 = Math.max(0, PL.days.findIndex(D => D.type !== "frei")), startFeld = planStart(PL);
+  const titel = s0 > 0 ? `KW ${kw(PL.week)} · ab ${WD[s0]}, ${fmtD(PL.days[s0].date)}` : `KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}`;
+  let html = `${wochenReiter()}<div class="planhead"><div><h2>${titel}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}${+S().ersterMaxKm > 0 ? " · erster Besuch höchstens " + S().ersterMaxKm + " km" : ""}</p></div>
    <div class="planknoepfe">${heuteDa ? `<button class="pri heuteknopf" data-a="heute">${ICON.heute}Heute</button>` : ""}
+   ${nachtWahl(PL.uebernachtung, startVon(startFeld).tag, ovErledigtText(PL))}
    <details class="planen" data-auf="planen" ${offenAttr("planen", !handy())}><summary>${ICON.pfeil}Planung ändern</summary>
-   ${planFelder(PL.week, PL.uebernachtung, `<button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button data-a="wloeschen">Woche löschen</button>`)}</details></div></div>
+   ${wocheAbFeld(startFeld)}<div class="plankn"><button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button data-a="wloeschen">Woche löschen</button></div></details></div></div>
    ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze der Woche"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
   PL.days.forEach((D, di) => {
     const date = fmtD(D.date);
     if (D.type === "home") { html += `<article class="day home" id="tag-${D.date}"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span></header><p>Home-Office. Zeit für Angebote, Muster und die Ausschreibungsrecherche.</p>${homeTermine(D.date)}${openTasksHTML()}</article>`; return; }
+    if (D.type === "frei") { html += `<article class="day home frei" id="tag-${D.date}"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span></header><p class="muted">Nicht geplant${D.day < s0 ? " – die Woche beginnt am " + WD[s0] : ""}.</p>${homeTermine(D.date, "Fester Termin an diesem freien Tag (wird nicht zusätzlich eingeplant):")}</article>`; return; }
     const sim = P.simDay(D);
     const nFix = D.stops.filter(id => P.istFix(id, D.day)).length;
     const label = D.type === "ov1" ? "Übernachtungstour · Tag 1" : D.type === "ov2" ? "Übernachtungstour · Tag 2" : "Tagestour";
@@ -438,10 +466,10 @@ function renderPlan() {
   return html + `</div>`;
 }
 // Ausnahme: Termine, die ein Kunde ausdrücklich am Freitag haben möchte
-function homeTermine(datum) {
+function homeTermine(datum, titel = "Ausnahme – Termin am Home-Office-Tag:") {
   const L = Object.entries(TERMINE()).filter(([id, f]) => f.date === datum && byId(id)).sort((a, b) => a[1].time.localeCompare(b[1].time));
   if (!L.length) return "";
-  return `<p class="warn">Ausnahme – Termin am Home-Office-Tag:</p><ul class="wnotes">` + L.map(([id, f]) => { const c = byId(id);
+  return `<p class="warn">${titel}</p><ul class="wnotes">` + L.map(([id, f]) => { const c = byId(id);
     return `<li>${f.time} Uhr · <button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> · ${esc(c.ort)}${kalHinweis(id)}</li>`; }).join("") + `</ul>`;
 }
 function kalHinweis(id) {
@@ -710,7 +738,7 @@ function dlg(html) { const d = $("#dlg"); d.classList.remove("breit"); d.innerHT
 function openCustomer(id) {
   const c = byId(id); if (!c) return;
   const PL = PLAN();
-  const dayOpts = PL ? PL.days.map((D, i) => D.type === "home" ? "" : `<option value="${i}">${WD[D.day]}</option>`).join("") : "";
+  const dayOpts = PL ? PL.days.map((D, i) => D.type === "home" || D.type === "frei" ? "" : `<option value="${i}">${WD[D.day]}</option>`).join("") : "";
   const tf = kommenderTermin(id);
   dlg(`<header class="dh"><h3>${esc(c.n1)} ${abcTag(c)}</h3><button value="x" class="ghost" aria-label="Schließen">Schließen</button></header>
    <p class="muted">${kdText(c)}</p>
@@ -856,6 +884,7 @@ function terminSpeichern(id) {
   if (warDrin && di >= 4) zusatz = " – aus den Touren dieser Woche genommen";
   if (di >= 0 && di <= 3) {
     const D = PL.days[di];
+    if (D.type === "frei") D.type = "tour"; // Termin an einem freien Tag: an diesem Tag wird doch gearbeitet
     PL.excluded = (PL.excluded || []).filter(x => x !== id);
     if (!D.stops.includes(id)) D.stops.push(id);
     // Tag um den Termin herum neu planen (feste Termine bleiben, passende Kunden in der Nähe kommen dazu)
@@ -881,7 +910,7 @@ function wocheAnsehen(d) {
   const mon = montag(d), da = planVon(mon);
   if (!da) { // erst die Übernachtung für diese Woche wählen lassen
     dlg(`<header class="dh"><h3>Woche ab ${fmtD(mon)} planen</h3><button value="x" class="ghost">Schließen</button></header>
-     <p>Wann soll in dieser Woche übernachtet werden?</p><div class="row wrap">${ovAuswahl("")}</div>
+     <p>Wann soll in dieser Woche übernachtet werden?</p>${nachtWahl("", startVon(mon).tag)}
      <div class="row wrap"><button class="pri" value="wocheplanen" data-datum="${esc(d)}">Woche planen</button><button value="x">Abbrechen</button></div>`);
     return;
   }
@@ -889,9 +918,8 @@ function wocheAnsehen(d) {
   zumTag(d);
 }
 function wocheMitNachtPlanen(d, nacht) {
-  const mon = montag(d);
-  if (!platzFuer(mon)) return;
-  aufbereiten(); planSetzen(P.planWeek(mon, [], TERMINE(), nacht, belegtFuer(mon)));
+  const { mon, tag } = startVon(montag(d));
+  if (!planeWoche(mon, tag, nacht)) return;
   TAB = "plan"; geaendert(); toast("Woche ab " + fmtD(mon) + " geplant");
   zumTag(d);
 }
@@ -1035,21 +1063,48 @@ function editDialog(id, vorlage = null) {
 }
 
 /* ---------- Aktionen ---------- */
-// Nacht muss gewählt sein (es gibt keinen Standard mehr)
-function nachtGewaehlt() {
-  const w = $("#main #ovwahl"); if (w && P.ovGueltig(w.value)) return w.value;
-  if (w) { w.focus(); w.reportValidity(); }
-  toast("Bitte zuerst bei „Übernachtung“ die Nacht wählen"); return null;
+// „Woche planen“ / „Neu planen“ / Nacht antippen: Woche ab dem Tag im Feld „Woche ab“ mit der gewählten Nacht planen
+function doPlan(nacht = gewaehlteNacht()) {
+  const { mon, tag } = startVon(($("#main #wk") || {}).value || startVorschlag());
+  if (!planeWoche(mon, tag, nacht)) return false;
+  geaendert(); return true;
 }
-function doPlan() {
-  const nacht = nachtGewaehlt(); if (!nacht) return;
-  const mon = montag($("#wk").value || iso(P.weekStart()));
+// Woche ab einem Tag planen (Wunsch 2026-10-17): die Tage davor bleiben frei; schon vergangene Tage mit Besuchen bleiben stehen
+// (auch Tag 2 einer begonnenen Übernachtung). Eine Nacht wird nur gebraucht, wenn noch eine möglich ist (es gibt keinen Standard).
+function planeWoche(mon, abTag, nacht) {
   const alt = planVon(mon); // dieselbe Woche neu planen: "nur diese Woche entfernt" bleibt
-  if (!alt && !platzFuer(mon)) return;
+  if (mon === montag(today())) abTag = Math.max(abTag, wochentag(today()));
+  if (abTag > 3) { toast("In dieser Woche ist kein Tourtag mehr übrig – bitte eine spätere Woche wählen"); return false; }
+  const behalten = alt ? alt.days.map((D, i) => i).filter(i => i < abTag && alt.days[i].date < today() && alt.days[i].stops.length) : [];
+  if (alt && behalten.some(i => alt.days[i].type === "ov1")) { const i2 = alt.days.findIndex(D => D.type === "ov2"); if (i2 >= abTag) { behalten.push(i2); abTag = i2 + 1; } }
+  const ovSchon = alt && behalten.some(i => alt.days[i].type === "ov1" || alt.days[i].type === "ov2");
+  const n = ovSchon || abTag >= 3 ? "keine" : nacht;
+  if (n !== "keine" && !P.ovMoeglich(n, abTag)) {
+    toast(P.ovGueltig(n) ? `Diese Nacht ist ab ${WD[abTag]} nicht möglich – bitte eine spätere wählen` : "Bitte zuerst bei „Übernachtung“ die Nacht wählen");
+    const g = $("#main .nachtwahl"); if (g) g.scrollIntoView({ block: "center" });
+    return false;
+  }
+  if (!alt && !platzFuer(mon)) return false;
   aufbereiten();
   // Termine aller Wochen; die Planung nimmt die dieser Woche. Kunden aus den anderen geplanten Wochen kommen nicht doppelt dran.
-  planSetzen(P.planWeek(mon, alt ? alt.excluded : [], TERMINE(), nacht, belegtFuer(mon)));
-  geaendert();
+  const plan = P.planWeek(mon, alt ? alt.excluded : [], TERMINE(), n, belegtFuer(mon).concat(behalten.flatMap(i => alt.days[i].stops)), abTag);
+  for (const i of behalten) plan.days[i] = alt.days[i];
+  planSetzen(plan); return true;
+}
+// Nacht-Knopf angetippt: im geplanten Wochenplan nach Rückfrage neu planen, sonst nur auswählen
+function nachtGeaendert(t) {
+  t.closest(".nachtwahl").querySelectorAll("label").forEach(l => l.classList.toggle("an", l.contains(t)));
+  const PL = PLAN();
+  if (!PL || !t.closest("#main .planhead") || t.value === PL.uebernachtung) return;
+  const l = P.UEBERNACHTUNG.find(u => u[0] === t.value)[1];
+  try { if (!confirm(`Woche mit Übernachtung ${l} neu planen? Feste Termine bleiben erhalten.`) || !doPlan(t.value)) render(); }
+  catch (err) { console.error(err); toast("Fehler: " + err.message); render(); }
+}
+// „Woche ab“ geändert: Nacht-Knöpfe an den Starttag anpassen (andere Woche: Nacht neu wählen)
+function nachtWahlAnpassen() {
+  const g = $("#main .nachtwahl"), wk = $("#main #wk"); if (!g || !wk) return;
+  const s = startVon(wk.value || startVorschlag()), PL = PLAN(), gleich = PL && s.mon === PL.week;
+  g.outerHTML = nachtWahl(gleich ? gewaehlteNacht() || PL.uebernachtung : PL ? "" : gewaehlteNacht(), s.tag, gleich ? ovErledigtText(PL) : "");
 }
 // Geplante Woche löschen (z. B. Urlaub) – feste Termine bleiben erhalten und kommen in die Woche, sobald sie wieder geplant wird
 function wocheLoeschen() {
@@ -1485,7 +1540,7 @@ document.addEventListener("click", async e => {
   if (db) {
     e.preventDefault();
     const fx = $("#fxt"); if (db.value === "savefix" && fx && !fx.value) { fx.reportValidity(); return; }
-    if (db.value === "wocheplanen") { const w = $("#dlg #ovwahl"); if (!P.ovGueltig(w.value)) { w.reportValidity(); return; } db.dataset.nacht = w.value; }
+    if (db.value === "wocheplanen") { const n = gewaehlteNacht("#dlg"); if (!n && $("#dlg .nachtwahl input:not([disabled])")) { toast("Bitte zuerst die Nacht wählen"); return; } db.dataset.nacht = n; }
     if (db.value === "saveappt") { const leer = ["#td", "#tt"].map($).find(x => x && !x.value); if (leer) { leer.reportValidity(); return; } }
     $("#dlg").close();
     try { dlgAktion(db.value, db); } catch (err) { console.error(err); toast("Fehler: " + err.message); }
@@ -1553,7 +1608,8 @@ document.addEventListener("change", async e => {
   if (t.id === "fdue") { FILTER.due = t.checked; render(); }
   if (t.id === "foh") { FILTER.ohneOh = t.checked; render(); }
   if (t.id === "ftrend") { FILTER.trend = t.checked; render(); }
-  if (t.id === "wk" && $("#main #ovwahl") && (!PLAN() || t.value !== PLAN().week)) $("#main #ovwahl").value = ""; // neue Woche: Übernachtung neu wählen
+  if (t.name === "ovwahl") nachtGeaendert(t);
+  if (t.id === "wk") nachtWahlAnpassen();
   if (t.id === "abglfile" && t.files[0]) {
     try { await abgleichStarten(t.files[0]); } catch (err) { console.error(err); toast("Liste konnte nicht gelesen werden: " + err.message); }
     t.value = "";

@@ -38,7 +38,7 @@ export function kundenNormalisieren(kunden) {
 }
 // Alle Umsatz-Jahre, die bei mindestens einem Kunden vorkommen (neuestes zuerst)
 export const umsatzJahre = kunden => [...new Set(kunden.flatMap(k => Object.keys(k.ums || {}).map(Number)))].sort((a, b) => b - a);
-const ARTEN = { "Tagestour": "tour", "Übernachtung Tag 1": "ov1", "Übernachtung Tag 2": "ov2", "Home-Office": "home" };
+const ARTEN = { "Tagestour": "tour", "Übernachtung Tag 1": "ov1", "Übernachtung Tag 2": "ov2", "Home-Office": "home", "Nicht geplant": "frei" };
 const ARTEN_TEXT = Object.fromEntries(Object.entries(ARTEN).map(([k, v]) => [v, k]));
 
 const txt = v => v == null ? "" : String(v).trim();
@@ -141,7 +141,7 @@ export function leseStand(XLSX, daten) {
     if (z["Schlüssel"] === "spaltenArten") try { spaltenArten = JSON.parse(z.Wert) || {}; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "uebernachtung") { // je Woche { "JJJJ-MM-TT": "auto" | "0-1" … } (ältere Stände: ein Wert für alle)
       let w = String(z.Wert); try { w = JSON.parse(w); } catch (e) { /* einfacher Wert */ }
-      for (const p of plaene) { const v = typeof w === "object" && w ? w[p.week] : w; if (/^(auto|0-1|1-2|2-3)$/.test(String(v))) p.uebernachtung = String(v); }
+      for (const p of plaene) { const v = typeof w === "object" && w ? w[p.week] : w; if (/^(auto|keine|0-1|1-2|2-3)$/.test(String(v))) p.uebernachtung = String(v); }
     }
   }
   return { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten, sicherung, neukundenAus };

@@ -148,11 +148,16 @@ export function weekStart(now = new Date()) { const d = new Date(now); const wd 
 // Übernachtung: wird jede Woche selbst gewählt (kein Standard): "0-1" (Mo→Di), "1-2" (Di→Mi), "2-3" (Mi→Do)
 export const UEBERNACHTUNG = [["0-1", "Mo → Di"], ["1-2", "Di → Mi"], ["2-3", "Mi → Do"]];
 export const ovGueltig = u => UEBERNACHTUNG.some(x => x[0] === u);
+// Nacht passt zum Starttag der Woche (abTag 0 = Montag … 3 = Donnerstag): die Nacht darf nicht vor dem Starttag beginnen
+export const ovMoeglich = (u, abTag = 0) => ovGueltig(u) && +u[0] >= abTag;
 // belegt: Kunden aus anderen geplanten Wochen (werden in dieser Woche nicht noch einmal eingeplant)
-export function planWeek(mondayISO, excluded, fixed, uebernachtung, belegt) {
-  if (!ovGueltig(uebernachtung)) throw new Error("Bitte zuerst bei „Übernachtung“ die Nacht wählen.");
+// abTag (Wunsch 2026-10-17): Woche erst ab diesem Tag planen, die Tage davor bleiben frei (type "frei").
+// uebernachtung "keine": ohne Übernachtung (Woche ab Donnerstag oder die Übernachtung der Woche war schon)
+export function planWeek(mondayISO, excluded, fixed, uebernachtung, belegt, abTag = 0) {
+  if (uebernachtung !== "keine" && !ovGueltig(uebernachtung)) throw new Error("Bitte zuerst bei „Übernachtung“ die Nacht wählen.");
+  if (uebernachtung !== "keine" && !ovMoeglich(uebernachtung, abTag)) throw new Error("Diese Nacht ist bei diesem Starttag nicht möglich.");
   setzeBelegt(belegt);
-  const plan = planWeekTage(mondayISO, excluded, fixed, uebernachtung);
+  const plan = planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag);
   plan.uebernachtung = uebernachtung;
   tauschPruefung(plan); // volle Tage: deutlich wichtigere Kunden in der Nähe gegen schwächere tauschen
   for (const D of plan.days) feinschliff(D); // zum Schluss: schnellste Reihenfolge je Tag
@@ -167,57 +172,61 @@ export function planeWochen(startMonISO, anzahl, fixed, belegt = [], uebernachtu
   }
   return plaene;
 }
-function planWeekTage(mondayISO, excluded, fixed, uebernachtung) {
+function planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag = 0) {
   fixed = fixed || {}; setFix(fixed, mondayISO); setzeStichtag(mondayISO);
   const ex = new Set(excluded || []); const used = new Set();
   const mon = parseISO(mondayISO);
-  const [o1, o2] = uebernachtung.split("-").map(Number);
-  const days = [0, 1, 2, 3].map(i => ({ date: iso(addDays(mon, i)), day: i, type: "tour", stops: [], hotel: null }));
+  // Tage vor dem Starttag bleiben frei (keine Besuche, auch keine festen Termine)
+  const days = [0, 1, 2, 3].map(i => ({ date: iso(addDays(mon, i)), day: i, type: i < abTag ? "frei" : "tour", stops: [], hotel: null }));
   days.push({ date: iso(addDays(mon, 4)), day: 4, type: "home", stops: [] });
   const pool = () => CUST.filter(c => !c.out && c.lat != null && !used.has(c.id) && !ex.has(c.id) && !c.planHold && !gesperrt(c.id));
   const due = el;
-  for (const id in FIX) { if (!byId(id)) continue; const D = days[FIX[id].day]; if (D && D.type !== "home") { D.stops.push(id); used.add(id); } }
+  // feste Termine: an Tourtagen eingeplant; an freien Tagen nicht eingeplant, der Kunde kommt dann aber auch an keinem anderen Tag dran
+  for (const id in FIX) { if (!byId(id)) continue; const D = days[FIX[id].day]; if (D && D.type === "tour") { D.stops.push(id); used.add(id); } else if (D && D.type === "frei") used.add(id); }
   for (const D of days) D.stops.sort((a, b) => tmin(FIX[a].time) - tmin(FIX[b].time));
   const nearSeeds = (seeds, maxKm) => c => seeds.some(x => km(x, c) <= maxKm);
   const distTo = (seeds, c) => Math.min(...seeds.map(x => km(x, c)));
 
-  /* Übernachtungstour */
-  const ovFix = days[o1].stops.concat(days[o2].stops).map(byId);
-  if (ovFix.length && ovFix.some(c => c.dHome > S.overnightKm * 0.7)) {
-    days[o1].type = "ov1"; days[o2].type = "ov2";
-    const cands = pool().filter(c => nearSeeds(ovFix, 75)(c) && c.dHome > S.overnightKm * 0.6 && el(c)).sort((a, b) => b.urg / (1 + distTo(ovFix, b) / 30) - a.urg / (1 + distTo(ovFix, a) / 30));
-    for (const c of cands) { if (days[o1].stops.length >= S.maxVisits) break; if (!openOn(c, o1)) continue; const r = insertBest(days[o1], c.id); if (r) { days[o1].stops = r; used.add(c.id); } }
-    const hp = days[o1].stops.length ? byId(days[o1].stops[days[o1].stops.length - 1]) : byId(days[o2].stops[0]);
-    days[o1].hotel = days[o2].hotel = hotelOrt(hp);
-    for (const c of cands) { if (used.has(c.id)) continue; if (days[o2].stops.length >= S.maxVisits) break; if (!openOn(c, o2)) continue; const r = insertBest(days[o2], c.id); if (r) { days[o2].stops = r; used.add(c.id); } }
-  }
-  const far = pool().filter(c => c.dHome > S.overnightKm && openOn(c, o1) && el(c));
-  // Gegenden nach Wichtigkeit (Summe der Kunden im Umkreis von 50 km); passt die beste nicht (z. B. kein erster Besuch
-  // nah genug an zu Hause), wird die nächste versucht
-  const gegenden = far.map(c => ({ c, sum: far.filter(x => km(c, x) <= 50).reduce((a, x) => a + x.urg, 0) })).sort((a, b) => b.sum - a.sum);
-  for (const { c: seed } of gegenden.slice(0, 10)) {
-    if (days[o1].stops.length || days[o2].stops.length) break;
-    // mit der Regel „erster Besuch höchstens … km“ auch Kunden ab 65 km (auf dem Weg), damit Tag 1 nah genug beginnen kann
-    const ab = +S.ersterMaxKm > 0 ? S.overnightKm * 0.5 : S.overnightKm * 0.7;
-    const region = pool().filter(c => km(seed, c) <= 75 && c.dHome > ab && (openOn(c, o1) || openOn(c, o2)) && el(c))
-      .sort((a, b) => b.urg / (1 + km(seed, b) / 30) - a.urg / (1 + km(seed, a) / 30));
-    const chosen = [];
-    const split = (ids) => {
-      const seq = order(HOME, ids, HOME);
-      const d1 = []; let i = 0;
-      for (; i < seq.length && d1.length < S.maxVisits; i++) { const t = simulate(HOME, tmin(S.depart), d1.concat(seq[i]), o1, null); if (t.ok && t.legs[t.legs.length - 1].begin <= tmin(S.lastVisitDay1)) d1.push(seq[i]); else break; }
-      const d2 = seq.slice(i); if (d2.length > S.maxVisits || !d1.length) return null;
-      const hotelPos = d1.length ? hotelOrt(byId(d1[d1.length - 1])) : HOME;
-      const s2 = simulate(hotelPos, tmin(S.hotelStart), d2, o2, HOME); if (!s2.ok || s2.end > tmin(S.latestOv)) return null;
-      return { d1, d2 };
-    };
-    let res = null;
-    for (const c of region) { if (chosen.length >= S.maxVisits * 2) break; const r = split(chosen.concat(c.id)); if (r) { chosen.push(c.id); res = r; } }
-    if (res) {
-      res.d1.concat(res.d2).forEach(id => used.add(id));
-      const h = byId(res.d1[res.d1.length - 1]);
-      days[o1].type = "ov1"; days[o1].stops = res.d1; days[o1].hotel = hotelOrt(h);
-      days[o2].type = "ov2"; days[o2].stops = res.d2; days[o2].hotel = days[o1].hotel;
+  /* Übernachtungstour (nur wenn eine Nacht gewählt ist) */
+  if (uebernachtung !== "keine") {
+    const [o1, o2] = uebernachtung.split("-").map(Number);
+    const ovFix = days[o1].stops.concat(days[o2].stops).map(byId);
+    if (ovFix.length && ovFix.some(c => c.dHome > S.overnightKm * 0.7)) {
+      days[o1].type = "ov1"; days[o2].type = "ov2";
+      const cands = pool().filter(c => nearSeeds(ovFix, 75)(c) && c.dHome > S.overnightKm * 0.6 && el(c)).sort((a, b) => b.urg / (1 + distTo(ovFix, b) / 30) - a.urg / (1 + distTo(ovFix, a) / 30));
+      for (const c of cands) { if (days[o1].stops.length >= S.maxVisits) break; if (!openOn(c, o1)) continue; const r = insertBest(days[o1], c.id); if (r) { days[o1].stops = r; used.add(c.id); } }
+      const hp = days[o1].stops.length ? byId(days[o1].stops[days[o1].stops.length - 1]) : byId(days[o2].stops[0]);
+      days[o1].hotel = days[o2].hotel = hotelOrt(hp);
+      for (const c of cands) { if (used.has(c.id)) continue; if (days[o2].stops.length >= S.maxVisits) break; if (!openOn(c, o2)) continue; const r = insertBest(days[o2], c.id); if (r) { days[o2].stops = r; used.add(c.id); } }
+    }
+    const far = pool().filter(c => c.dHome > S.overnightKm && openOn(c, o1) && el(c));
+    // Gegenden nach Wichtigkeit (Summe der Kunden im Umkreis von 50 km); passt die beste nicht (z. B. kein erster Besuch
+    // nah genug an zu Hause), wird die nächste versucht
+    const gegenden = far.map(c => ({ c, sum: far.filter(x => km(c, x) <= 50).reduce((a, x) => a + x.urg, 0) })).sort((a, b) => b.sum - a.sum);
+    for (const { c: seed } of gegenden.slice(0, 10)) {
+      if (days[o1].stops.length || days[o2].stops.length) break;
+      // mit der Regel „erster Besuch höchstens … km“ auch Kunden ab 65 km (auf dem Weg), damit Tag 1 nah genug beginnen kann
+      const ab = +S.ersterMaxKm > 0 ? S.overnightKm * 0.5 : S.overnightKm * 0.7;
+      const region = pool().filter(c => km(seed, c) <= 75 && c.dHome > ab && (openOn(c, o1) || openOn(c, o2)) && el(c))
+        .sort((a, b) => b.urg / (1 + km(seed, b) / 30) - a.urg / (1 + km(seed, a) / 30));
+      const chosen = [];
+      const split = (ids) => {
+        const seq = order(HOME, ids, HOME);
+        const d1 = []; let i = 0;
+        for (; i < seq.length && d1.length < S.maxVisits; i++) { const t = simulate(HOME, tmin(S.depart), d1.concat(seq[i]), o1, null); if (t.ok && t.legs[t.legs.length - 1].begin <= tmin(S.lastVisitDay1)) d1.push(seq[i]); else break; }
+        const d2 = seq.slice(i); if (d2.length > S.maxVisits || !d1.length) return null;
+        const hotelPos = d1.length ? hotelOrt(byId(d1[d1.length - 1])) : HOME;
+        const s2 = simulate(hotelPos, tmin(S.hotelStart), d2, o2, HOME); if (!s2.ok || s2.end > tmin(S.latestOv)) return null;
+        return { d1, d2 };
+      };
+      let res = null;
+      for (const c of region) { if (chosen.length >= S.maxVisits * 2) break; const r = split(chosen.concat(c.id)); if (r) { chosen.push(c.id); res = r; } }
+      if (res) {
+        res.d1.concat(res.d2).forEach(id => used.add(id));
+        const h = byId(res.d1[res.d1.length - 1]);
+        days[o1].type = "ov1"; days[o1].stops = res.d1; days[o1].hotel = hotelOrt(h);
+        days[o2].type = "ov2"; days[o2].stops = res.d2; days[o2].hotel = days[o1].hotel;
+      }
     }
   }
   /* Tagestouren */
@@ -451,7 +460,8 @@ function ersatzKandidaten(plan, D, extraAus, weit) {
   const nah = D.type === "tour" ? (c => c.dHome <= S.overnightKm) : (() => true);
   // weit: auch Kunden ohne Umsatz (Mindestabstand gilt trotzdem)
   const passt = weit ? (c => c.gapOk) : el;
-  return CUST.filter(c => !c.out && c.lat != null && !c.planHold && !gesperrt(c.id) && !inPlan.has(c.id) && !ex.has(c.id) && !(extraAus && extraAus.has(c.id)) && nah(c) && openOn(c, D.day) && passt(c));
+  // Kunden mit festem Termin in dieser Woche nie als Ersatz (sie stehen schon im Plan oder ihr Termin liegt an einem freien Tag)
+  return CUST.filter(c => !c.out && c.lat != null && !c.planHold && !gesperrt(c.id) && !inPlan.has(c.id) && !FIX[c.id] && !ex.has(c.id) && !(extraAus && extraAus.has(c.id)) && nah(c) && openOn(c, D.day) && passt(c));
 }
 // Nach dem Entfernen eines Kunden: passenden Ersatz in den Tag einfügen.
 export function findReplacement(plan, D, removed) {
