@@ -314,7 +314,7 @@ function bookingUrl(h, date) {
 
 // Warum in der geplanten Woche keine Übernachtung zustande kam
 function ovGrund(PL) {
-  if (PL.uebernachtung === "keine") return PL.days.findIndex(D => D.type !== "frei") >= 3 ? "Die Woche beginnt erst am Donnerstag." : "Die Übernachtung dieser Woche war schon.";
+  if (PL.uebernachtung === "keine") return ovErledigt(PL) ? "Die Übernachtung dieser Woche war schon." : PL.days.findIndex(D => D.type !== "frei") >= 3 ? "Die Woche beginnt erst am Donnerstag." : "Ohne Übernachtung geplant – nur Tagestouren.";
   const wahl = P.ovGueltig(PL.uebernachtung) ? PL.uebernachtung : null;
   const tage = wahl ? wahl.split("-").map(Number) : [0, 1, 2, 3];
   const fx = Object.entries(TERMINE()).map(([id, f]) => ({ c: byId(id), f, di: Math.round((parseISO(f.date) - parseISO(PL.week)) / 864e5) }))
@@ -327,11 +327,13 @@ function ovGrund(PL) {
 // Übernachtung (Wunsch 2026-10-17): drei Knöpfe Mo → Di, Di → Mi, Mi → Do, immer sichtbar. Im geplanten Wochenplan plant ein
 // Tipp auf eine andere Nacht die Woche nach Rückfrage neu; bei einer neuen Woche und im Fenster wird die Nacht nur ausgewählt.
 // Kein Standard: bei einer neuen Woche ist keine Nacht gewählt. Nächte vor dem Starttag sind nicht wählbar.
-function nachtWahl(wert, abTag, hinweis = "") {
-  if (!hinweis && abTag >= 3) hinweis = "Ab Donnerstag ist keine Übernachtung möglich – es wird nur eine Tagestour geplant.";
-  return `<div class="nachtwahl" role="radiogroup" aria-label="Übernachtung"><span class="nl">Übernachtung</span><div class="nk">${P.UEBERNACHTUNG.map(([v, l]) => {
-    const geht = !hinweis && P.ovMoeglich(v, abTag), an = geht && v === wert;
-    return `<label class="${an ? "an" : ""}${geht ? "" : " aus"}"><input type="radio" name="ovwahl" value="${v}" ${an ? "checked" : ""} ${geht ? "" : "disabled"}>${l}</label>`; }).join("")}</div>${hinweis ? `<span class="hinweis">${esc(hinweis)}</span>` : ""}</div>`;
+function nachtWahl(wert, abTag, erledigt = "") {
+  // „Keine“ (Wunsch 2026-10-17): Woche ohne Übernachtung, nur Tagestouren; ab Donnerstag ist nur „Keine“ möglich
+  const hinweis = erledigt || (abTag >= 3 ? "Ab Donnerstag ist keine Übernachtung möglich – nur Tagestour." : "");
+  const wahl = !erledigt && abTag >= 3 ? "keine" : wert;
+  return `<div class="nachtwahl" role="radiogroup" aria-label="Übernachtung"><span class="nl">Übernachtung</span><div class="nk">${P.UEBERNACHTUNG.concat([["keine", "Keine"]]).map(([v, l]) => {
+    const geht = !erledigt && (v === "keine" || P.ovMoeglich(v, abTag)), an = geht && v === wahl;
+    return `<label class="${an ? "an" : ""}${geht ? "" : " aus"}"${v === "keine" ? ` title="Keine Übernachtung – nur Tagestouren"` : ""}><input type="radio" name="ovwahl" value="${v}" ${an ? "checked" : ""} ${geht ? "" : "disabled"}>${l}</label>`; }).join("")}</div>${hinweis ? `<span class="hinweis">${esc(hinweis)}</span>` : ""}</div>`;
 }
 const wocheAbFeld = woche => `<div class="planfelder einzeln"><label>Woche ab<input type="date" id="wk" value="${woche}"></label></div>`;
 // Vorschlag für „Woche ab“ (Wunsch 2026-10-17): Montag bis Mittwoch heute, sonst der nächste Montag
@@ -482,7 +484,7 @@ function weekSummary() {
   PL.days.forEach(D => { if (D.type === "home" || !D.stops.length) return; const s = P.simDay(D); kmT += s.km; vis += D.stops.length; });
   const hotel = PL.days.find(D => D.type === "ov1"); const nFixAll = PL.days.reduce((a, D) => a + D.stops.filter(id => P.istFix(id, D.day)).length, 0);
   return `<aside class="summary"><div><b>${vis}</b><span>Besuche geplant, davon ${nFixAll} fest bestätigt</span></div><div><b>${Math.round(kmT).toLocaleString("de-DE")} km</b><span>geschätzte Fahrstrecke</span></div>
-   <div><b>${hotel && hotel.hotel ? esc(hotel.hotel.ort) : "–"}</b><span>${hotel ? "Übernachtung " + WD[hotel.day] : "keine Übernachtung möglich"}</span>${hotel ? "" : `<span class="warn">${esc(ovGrund(PL))}</span>`}</div>
+   <div><b>${hotel && hotel.hotel ? esc(hotel.hotel.ort) : "–"}</b><span>${hotel ? "Übernachtung " + WD[hotel.day] : PL.uebernachtung === "keine" ? "keine Übernachtung" : "keine Übernachtung möglich"}</span>${hotel ? "" : `<span${PL.uebernachtung === "keine" ? "" : ` class="warn"`}>${esc(ovGrund(PL))}</span>`}</div>
    <div><b>${eur(PL.days.reduce((a, D) => a + D.stops.reduce((x, id) => x + ((byId(id) || {}).uPlan || 0), 0), 0))}</b><span>Umsatz ${S().umsatzJahr} der geplanten Kunden</span></div>
    <p class="muted">Freitag: Home-Office</p></aside>`;
 }
@@ -642,7 +644,7 @@ function renderSettings() {
    ${f("overnightKm", "Übernachtung ab Fahrstrecke (km)")}
    ${f("hotelMax", "Hotelbudget pro Nacht inkl. Frühstück (€)")}
    <label class="chk"><input type="checkbox" data-s="parking" ${s.parking ? "checked" : ""}> Hotel mit Parkplatz</label>
-   <p class="muted">Höchstens eine Übernachtung pro Woche. Die Nacht wählen Sie im Wochenplan bei „Übernachtung“ für jede Woche selbst (Mo→Di, Di→Mi oder Mi→Do). Freitag ist immer Home-Office.</p></fieldset>
+   <p class="muted">Höchstens eine Übernachtung pro Woche. Die Nacht wählen Sie im Wochenplan bei „Übernachtung“ für jede Woche selbst (Mo→Di, Di→Mi, Mi→Do oder „Keine“ – dann nur Tagestouren). Freitag ist immer Home-Office.</p></fieldset>
   <fieldset><legend>Tagesablauf</legend>
    <label>Startadresse (zu Hause)<input type="text" data-s="start" value="${esc(s.start || "")}" placeholder="Straße Nr., PLZ Ort"></label>
    ${P.startBekannt() ? "" : `<p class="warn">Bitte Startadresse mit PLZ eintragen – ohne sie kann nicht geplant werden.</p>`}
@@ -1096,8 +1098,8 @@ function nachtGeaendert(t) {
   t.closest(".nachtwahl").querySelectorAll("label").forEach(l => l.classList.toggle("an", l.contains(t)));
   const PL = PLAN();
   if (!PL || !t.closest("#main .planhead") || t.value === PL.uebernachtung) return;
-  const l = P.UEBERNACHTUNG.find(u => u[0] === t.value)[1];
-  try { if (!confirm(`Woche mit Übernachtung ${l} neu planen? Feste Termine bleiben erhalten.`) || !doPlan(t.value)) render(); }
+  const l = t.value === "keine" ? "ohne Übernachtung (nur Tagestouren)" : "mit Übernachtung " + P.UEBERNACHTUNG.find(u => u[0] === t.value)[1];
+  try { if (!confirm(`Woche ${l} neu planen? Feste Termine bleiben erhalten.`) || !doPlan(t.value)) render(); }
   catch (err) { console.error(err); toast("Fehler: " + err.message); render(); }
 }
 // „Woche ab“ geändert: Nacht-Knöpfe an den Starttag anpassen (andere Woche: Nacht neu wählen)
