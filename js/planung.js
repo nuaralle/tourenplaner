@@ -95,7 +95,29 @@ export function setzeStichtag(datumISO) {
   const grenze = iso(addDays(parseISO(datumISO), -7 * (+S.abstandWochen || 0)));
   for (const c of CUST) c.gapOk = !LV_NUTZEN() || !c.lv || c.lv <= grenze;
 }
-export const byId = id => byIdMap.get(id);
+export const byId = id => byIdMap.get(id) || PRIVAT.get(id);
+/* ---------- Persönliche Termine (Wunsch 2026-10-18) ---------- */
+// Arzt, Werkstatt, Treffen …: Betreff, Ort (mit PLZ, Pflicht) und Zeit von–bis. Sie stehen in der Terminliste unter einer
+// Kennung "P:…" ({ date, time, ende, betreff, str, plz, ort }) und werden wie ein fester Termin eingeplant: Fahrt zum Ort,
+// Aufenthalt von–bis, die Kunden davor und danach. Sie zählen nicht bei „höchstens 8 Besuche“, kommen nie als Ersatz oder
+// Alternative in Frage und haben keinen „Letzten Besuch“.
+let PRIVAT = new Map();
+export const istPrivat = id => String(id).startsWith("P:");
+export function privatPunkt(id, f) {
+  const p = PLZ[f.plz];
+  const c = { id, privat: true, n1: f.betreff || "Persönlicher Termin", str: f.str || "", plz: f.plz || "", ort: f.ort || "",
+    lat: p ? p[0] : null, lng: p ? p[1] : null, vm: Math.max(5, tmin(f.ende) - tmin(f.time)) || S.visitMin, ohp: parseOH(""),
+    notes: [], ums: {}, extra: {}, uPlan: 0, urg: 0, gapOk: true };
+  c.dHome = c.lat != null && startBekannt() ? fahrt(HOME, c).km : null;
+  return c;
+}
+export function setzePrivat(termine) {
+  PRIVAT = new Map();
+  for (const [id, f] of Object.entries(termine || {})) if (istPrivat(id)) { const c = privatPunkt(id, f); if (c.lat != null) PRIVAT.set(id, c); }
+}
+export const privatListe = () => [...PRIVAT.values()];
+// Anzahl Kundenbesuche eines Tages (ohne persönliche Termine)
+export const anzahlBesuche = stops => stops.filter(id => !istPrivat(id)).length;
 // Kommt für die Planung in Frage: Mindestabstand eingehalten und – je nach Grundlage – Umsatz im gewählten Jahr bzw. Häkchen gesetzt
 export const el = c => c.gapOk && (MERKMAL() ? hatMerkmal(c) : LAENGST() || c.uPlan > 0);
 
@@ -194,10 +216,10 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag = 0) {
     if (ovFix.length && ovFix.some(c => c.dHome > S.overnightKm * 0.7)) {
       days[o1].type = "ov1"; days[o2].type = "ov2";
       const cands = pool().filter(c => nearSeeds(ovFix, 75)(c) && c.dHome > S.overnightKm * 0.6 && el(c)).sort((a, b) => b.urg / (1 + distTo(ovFix, b) / 30) - a.urg / (1 + distTo(ovFix, a) / 30));
-      for (const c of cands) { if (days[o1].stops.length >= S.maxVisits) break; if (!openOn(c, o1)) continue; const r = insertBest(days[o1], c.id); if (r) { days[o1].stops = r; used.add(c.id); } }
+      for (const c of cands) { if (anzahlBesuche(days[o1].stops) >= S.maxVisits) break; if (!openOn(c, o1)) continue; const r = insertBest(days[o1], c.id); if (r) { days[o1].stops = r; used.add(c.id); } }
       const hp = days[o1].stops.length ? byId(days[o1].stops[days[o1].stops.length - 1]) : byId(days[o2].stops[0]);
       days[o1].hotel = days[o2].hotel = hotelOrt(hp);
-      for (const c of cands) { if (used.has(c.id)) continue; if (days[o2].stops.length >= S.maxVisits) break; if (!openOn(c, o2)) continue; const r = insertBest(days[o2], c.id); if (r) { days[o2].stops = r; used.add(c.id); } }
+      for (const c of cands) { if (used.has(c.id)) continue; if (anzahlBesuche(days[o2].stops) >= S.maxVisits) break; if (!openOn(c, o2)) continue; const r = insertBest(days[o2], c.id); if (r) { days[o2].stops = r; used.add(c.id); } }
     }
     const far = pool().filter(c => c.dHome > S.overnightKm && openOn(c, o1) && el(c));
     // Gegenden nach Wichtigkeit (Summe der Kunden im Umkreis von 50 km); passt die beste nicht (z. B. kein erster Besuch
@@ -236,7 +258,7 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag = 0) {
     if (D.stops.length) {
       const sd = D.stops.map(byId);
       const near = cands.filter(c => nearSeeds(sd, 45)(c) && el(c)).sort((a, b) => b.urg / (1 + distTo(sd, b) / 20) - a.urg / (1 + distTo(sd, a) / 20));
-      for (const c of near) { if (D.stops.length >= S.maxVisits) break; const r = insertBest(D, c.id); if (r) { D.stops = r; used.add(c.id); } }
+      for (const c of near) { if (anzahlBesuche(D.stops) >= S.maxVisits) break; const r = insertBest(D, c.id); if (r) { D.stops = r; used.add(c.id); } }
       continue;
     }
     const seeds = cands.filter(due).sort((a, b) => b.urg - a.urg); if (!seeds.length) continue;
@@ -311,7 +333,7 @@ const UMWEG_MAX = 20, NAH_KM = 15;
 // 20 km Umweg auf der Strecke; wichtigste (Umsatz bzw. am längsten nicht besucht) zuerst, kleiner Umweg bevorzugt.
 function auffuellen(D, frei, genommen) {
   const ov1Ende = D.type === "ov1" ? D.stops[D.stops.length - 1] : null; // Hotel bleibt beim letzten Besuch von Tag 1
-  while (D.stops.length < S.maxVisits) {
+  while (anzahlBesuche(D.stops) < S.maxVisits) {
     const st = D.stops.map(byId).filter(Boolean);
     // An Übernachtungstagen nur Kunden in der Ferne – Kunden nahe Bremen bleiben für Tagestouren
     const fern = D.type === "tour" ? (() => true) : (c => c.dHome > S.overnightKm * 0.5);
@@ -345,7 +367,7 @@ export function tauschPruefung(plan, nurTag) {
     if (D.type === "home" || (nurTag && D !== nurTag)) continue;
     const fern = D.type === "tour" ? (() => true) : (c => c.dHome > S.overnightKm * 0.5); // wie beim Auffüllen
     const raus = new Set(); // an diesem Tag schon herausgetauscht – kommt nicht wieder herein
-    for (let runde = 0; runde < S.maxVisits && D.stops.length >= S.maxVisits; runde++) {
+    for (let runde = 0; runde < S.maxVisits && anzahlBesuche(D.stops) >= S.maxVisits; runde++) {
       const st = D.stops.map(byId).filter(Boolean);
       const hotelId = D.type === "ov1" ? D.stops[D.stops.length - 1] : null;
       const weg = st.filter(c => !(FIX[c.id] && FIX[c.id].day === D.day) && c.id !== hotelId).sort((a, b) => a.urg - b.urg);
@@ -432,7 +454,7 @@ export function planeTagUm(plan, di) {
   // Kunden in der Nähe der Termine (auch wenn der Termin weit draußen liegt – ob der Tag passt, prüft insertBest)
   const sd = D.stops.map(byId).filter(Boolean), dist = c => Math.min(...sd.map(x => km(x, c)));
   const near = CUST.filter(c => frei(c) && dist(c) <= 45).sort((a, b) => b.urg / (1 + dist(b) / 20) - a.urg / (1 + dist(a) / 20));
-  for (const c of near) { if (D.stops.length >= S.maxVisits) break; const r = insertBest(D, c.id); if (r) D.stops = r; }
+  for (const c of near) { if (anzahlBesuche(D.stops) >= S.maxVisits) break; const r = insertBest(D, c.id); if (r) D.stops = r; }
   // Auffüllen: in der Nähe oder mit kleinem Umweg auf der Strecke (auch auf dem Heimweg)
   auffuellen(D, frei, () => {});
   feinschliff(D); // schnellste Reihenfolge (bei Tag 1 bleibt der letzte Besuch = Hotelort)
@@ -501,7 +523,7 @@ export function alternativen(plan) {
     // Ist der Tag schon zu voll (z. B. nach „Alternative davor/danach“), reicht es, wenn der Tausch ihn nicht schlechter macht
     const passt = alternativeOhneVerschlechterung(D);
     D.stops.forEach((id, i) => {
-      const s = byId(id); if (!s) return;
+      const s = byId(id); if (!s || s.privat) return; // persönliche Termine haben keine Alternativen
       const liste = [], drin = new Set(), nein = new Set();
       const suche = (stufenListe, anzahl) => {
         for (const st of stufenListe) {

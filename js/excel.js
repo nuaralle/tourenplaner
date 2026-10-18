@@ -1,4 +1,4 @@
-// Excel-Stand lesen und schreiben (Blätter "Kundenliste", "Einstellungen", "Wochenplan", "Termine").
+// Excel-Stand lesen und schreiben (Blätter "Kundenliste", "Einstellungen", "Wochenplan", "Termine", "Persönliche Termine").
 // Das Format entspricht der Datei Tourenplaner_Stand_*.xlsx aus dem Prototyp.
 import { DEFAULTS, EINST_NAMEN, iso, fmtD, addDays, parseISO, hotelOrt } from "./grundlagen.js";
 import { PLZ } from "./plz.js";
@@ -40,6 +40,7 @@ export function kundenNormalisieren(kunden) {
 export const umsatzJahre = kunden => [...new Set(kunden.flatMap(k => Object.keys(k.ums || {}).map(Number)))].sort((a, b) => b - a);
 const ARTEN = { "Tagestour": "tour", "Übernachtung Tag 1": "ov1", "Übernachtung Tag 2": "ov2", "Home-Office": "home", "Nicht geplant": "frei" };
 const ARTEN_TEXT = Object.fromEntries(Object.entries(ARTEN).map(([k, v]) => [v, k]));
+const PRIVAT_BLATT = "Persönliche Termine"; // Wunsch 2026-10-18
 
 const txt = v => v == null ? "" : String(v).trim();
 const ja = v => v === true || /^(ja|x|true|wahr|1)$/i.test(txt(v));
@@ -120,8 +121,17 @@ export function leseStand(XLSX, daten) {
     }
   }
 
+  // Persönliche Termine (Wunsch 2026-10-18): eigenes Blatt, Kennung "P:…" (steht auch im Wochenplan in der Spalte „Kd Nr.“)
+  const privat = {};
+  if (wb.Sheets[PRIVAT_BLATT]) for (const z of XLSX.utils.sheet_to_json(wb.Sheets[PRIVAT_BLATT], { defval: "" })) {
+    const d = datum(z.Datum), t = uhrzeit(z.von), e = uhrzeit(z.bis);
+    if (!d || !t || !e) continue;
+    let id = txt(z.Kennung); if (!id.startsWith("P:") || privat[id]) id = "P:" + Date.now().toString(36) + Object.keys(privat).length;
+    privat[id] = { date: d, time: t, ende: e, betreff: txt(z.Betreff), str: txt(z["Straße"]), plz: txt(z.PLZ).replace(/\D/g, "").padStart(5, "0"), ort: txt(z.Ort) };
+    if (txt(z["Kalender-Eintrag"])) { privat[id].ev = txt(z["Kalender-Eintrag"]); privat[id].cal = "ok"; }
+  }
   // Wochenplan: eine oder mehrere Wochen untereinander; angezeigt wird die aktuelle bzw. nächste Woche
-  const plaene = wb.Sheets["Wochenplan"] ? leseWochenplaene(XLSX.utils.sheet_to_json(wb.Sheets["Wochenplan"], { defval: "" }), kunden) : [];
+  const plaene = wb.Sheets["Wochenplan"] ? leseWochenplaene(XLSX.utils.sheet_to_json(wb.Sheets["Wochenplan"], { defval: "" }), kunden, privat) : [];
   const dieseWoche = iso(addDays(new Date(), -((new Date().getDay() + 6) % 7)));
   const plan = plaene.find(p => p.week >= dieseWoche) || plaene[plaene.length - 1] || null;
   // Feste Termine: Blatt "Termine" (alle Wochen) und – für ältere Stände – die Spalte "Fixtermin" im Wochenplan
@@ -131,6 +141,7 @@ export function leseStand(XLSX, daten) {
     if (!id || !d || !t || !kunden.some(k => k.id === id)) continue;
     termine[id] = { date: d, time: t }; if (uhrzeit(z["Tag bis"])) termine[id].bis = uhrzeit(z["Tag bis"]); if (txt(z["Kalender-Eintrag"])) { termine[id].ev = txt(z["Kalender-Eintrag"]); termine[id].cal = "ok"; }
   }
+  Object.assign(termine, privat);
   for (const p of plaene) { for (const id in p.fixed) if (!termine[id]) termine[id] = p.fixed[id]; p.fixed = termine; }
   let kalLoeschen = [], spaltenArten = {}, sicherung = "", neukundenAus = [];
   if (wb.Sheets["Intern"]) for (const z of XLSX.utils.sheet_to_json(wb.Sheets["Intern"], { defval: "" })) {
@@ -148,16 +159,17 @@ export function leseStand(XLSX, daten) {
 }
 
 // Zeilen nach Wochen (Montag) aufteilen
-function leseWochenplaene(zeilen, kunden) {
+function leseWochenplaene(zeilen, kunden, privat = {}) {
   const wochen = new Map();
   for (const z of zeilen) { const d = datum(z.Datum); if (!d) continue; const d0 = parseISO(d); const mon = iso(addDays(d0, -((d0.getDay() + 6) % 7)));
     if (!wochen.has(mon)) wochen.set(mon, []); wochen.get(mon).push(z); }
-  return [...wochen.keys()].sort().map(mon => leseWoche(wochen.get(mon), kunden, parseISO(mon)));
+  return [...wochen.keys()].sort().map(mon => leseWoche(wochen.get(mon), kunden, parseISO(mon), privat));
 }
-function leseWoche(zeilen, kunden, mon) {
+function leseWoche(zeilen, kunden, mon, privat = {}) {
   const days = [0, 1, 2, 3, 4].map(i => ({ date: iso(addDays(mon, i)), day: i, type: i === 4 ? "home" : "tour", stops: [], hotel: null }));
   const fixed = {}; const hotelAusExcel = {};
-  const kd = new Map(kunden.map(k => [k.id, k]));
+  // persönliche Termine stehen wie Kunden im Wochenplan (Lage über ihre PLZ)
+  const kd = new Map(kunden.map(k => [k.id, k]).concat(Object.entries(privat).map(([id, f]) => [id, { id, ort: f.ort, plz: f.plz, privat: true }])));
   const sortiert = zeilen.slice().sort((a, b) => (datum(a.Datum) + String(a.Reihenfolge).padStart(3, "0")).localeCompare(datum(b.Datum) + String(b.Reihenfolge).padStart(3, "0")));
   for (const z of sortiert) {
     const di = Math.round((parseISO(datum(z.Datum)) - mon) / 864e5); if (di < 0 || di > 4) continue;
@@ -220,7 +232,7 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(es, { header: ["Einstellung", "Wert", "Schlüssel"] }), "Einstellungen");
 
   const wp = [];
-  const kd = new Map(kunden.map(k => [k.id, k]));
+  const kd = new Map(kunden.map(k => [k.id, k]).concat(Object.entries(termine).filter(([id]) => id.startsWith("P:")).map(([id, f]) => [id, { n1: f.betreff, ort: f.ort }])));
   for (const woche of wochen) {
     for (const D of woche.days) {
       const art = ARTEN_TEXT[D.type] || "Tagestour";
@@ -235,9 +247,12 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
   }
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(wp, { header: ["Datum", "Art", "Reihenfolge", "Kd Nr.", "Kunde", "Fixtermin", "Hotel", "Kalender-Eintrag"] }), "Wochenplan");
   const kdN = new Map(kunden.map(k => [k.id, k]));
-  const tr = Object.entries(termine).sort((a, b) => (a[1].date + a[1].time).localeCompare(b[1].date + b[1].time))
+  const tr = Object.entries(termine).filter(([id]) => !id.startsWith("P:")).sort((a, b) => (a[1].date + a[1].time).localeCompare(b[1].date + b[1].time))
     .map(([id, f]) => { const k = kdN.get(id) || {}; return { "Datum": f.date, "Uhrzeit": f.time, "Kd Nr.": id, "Kunde": (k.n1 || "?") + " (" + (k.ort || "") + ")", "Kalender-Eintrag": f.ev || "", "Tag bis": f.bis || "" }; });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr, { header: ["Datum", "Uhrzeit", "Kd Nr.", "Kunde", "Kalender-Eintrag", "Tag bis"] }), "Termine");
+  const pt = Object.entries(termine).filter(([id]) => id.startsWith("P:")).sort((a, b) => (a[1].date + a[1].time).localeCompare(b[1].date + b[1].time))
+    .map(([id, f]) => ({ "Datum": f.date, "von": f.time, "bis": f.ende, "Betreff": f.betreff || "", "Straße": f.str || "", "PLZ": f.plz || "", "Ort": f.ort || "", "Kalender-Eintrag": f.ev || "", "Kennung": id }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pt, { header: ["Datum", "von", "bis", "Betreff", "Straße", "PLZ", "Ort", "Kalender-Eintrag", "Kennung"] }), PRIVAT_BLATT);
   // Internes Blatt: noch zu löschende Kalendertermine (z. B. wenn ein Termin offline gelöst wurde)
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ "Schlüssel": "kalLoeschen", "Wert": JSON.stringify(kalLoeschen || []) }, { "Schlüssel": "uebernachtung", "Wert": JSON.stringify(Object.fromEntries(wochen.map(p => [p.week, p.uebernachtung || "auto"]))) }, { "Schlüssel": "spaltenArten", "Wert": JSON.stringify(spaltenArten || {}) },
     { "Schlüssel": "sicherung", "Wert": sicherung || "" },

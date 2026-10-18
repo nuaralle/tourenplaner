@@ -70,6 +70,10 @@ figcaption .dueI{width:8px;height:8px;border-radius:50%;background:var(--A);opac
 .stop .acts{grid-column:2;display:flex;gap:.3rem;margin-top:.25rem}.stop .acts button{flex:1 1 0;min-width:0;text-align:center;hyphens:manual;min-height:44px;padding:.2rem .3rem;font-size:.82rem;font-weight:700;line-height:1.15}
 .stop.done .who{opacity:.65}
 .fixb{display:block;font:700 .7rem var(--disp);color:var(--accInk);background:var(--dc);border-radius:3px;text-align:center;margin-top:.15rem;padding:0 .2rem;width:fit-content}
+/* persönliche Termine (2026-10-18): grauer Hintergrund, Schild „privat“ in Grau statt Tagesfarbe */
+.stop.isfix.privat{background:var(--surf2);border-radius:6px;padding-left:.35rem;padding-right:.35rem}
+.fixb.privb{background:var(--muted);color:var(--surf)}
+.wnotes .fixb.privb{display:inline-block;margin:0 .25rem}
 .stop.isfix{background:color-mix(in srgb,var(--dc) 7%,transparent)}
 button.fixbtn{border-color:var(--dc);color:var(--ink)}
 .sub a{font-weight:500}
