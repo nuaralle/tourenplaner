@@ -293,11 +293,11 @@ const ICON = {
 };
 // Anruf als Knopf (Telefon oder Mobil)
 const telKnopf = (t, text, icon = ICON.tel) => `<a class="pill" href="tel:${esc(t.replace(/[^\d+]/g, ""))}" aria-label="${esc(text + " " + t)}">${icon}${text}</a>`;
-// Navigation zu einem Kunden: auf dem iPhone Apple Karten, sonst Google Maps. Es wird nur die Adresse übergeben (kein Firmenname).
+// Navigation: immer Google Maps (Wunsch 2026-10-18, vorher auf dem iPhone Apple Karten). Es wird nur die Adresse übergeben (kein Firmenname).
 const adresse = c => [c.str, (c.plz + " " + c.ort).trim()].filter(Boolean).join(", ");
 function navLink(c, text, cls = "") {
   const adr = adresse(c);
-  const url = IOS ? "https://maps.apple.com/?daddr=" + encodeURIComponent(adr) + "&dirflg=d" : "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(adr) + "&travelmode=driving";
+  const url = "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(adr) + "&travelmode=driving";
   return `<a${cls ? ` class="${cls}"` : ""} href="${url}" target="_blank" rel="noopener">${text}</a>`;
 }
 // Auf-/zugeklappte Bereiche: auf dem Handy anfangs zu, am Rechner offen; die letzte Wahl bleibt beim Neuzeichnen erhalten
@@ -1592,7 +1592,7 @@ function nkListe() {
    ${aus.length ? `<details><summary>Ausgeblendet (${aus.length})</summary>${block(aus)}</details>` : ""}`;
 }
 // Navi ohne Adresse: zur Lage aus OpenStreetMap
-const nkNaviLage = b => `<a href="${IOS ? `https://maps.apple.com/?daddr=${b.lat},${b.lng}&dirflg=d` : `https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}&travelmode=driving`}" target="_blank" rel="noopener">Navi</a>`;
+const nkNaviLage = b => `<a href="https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}&travelmode=driving" target="_blank" rel="noopener">Navi</a>`;
 function nkZeigen() { const z = $("#nkinhalt"); if (z) z.innerHTML = nkListe(); }
 function nkUebernehmen(osm) {
   const b = (NK.L || []).find(x => x.osm === osm); if (!b) return;
