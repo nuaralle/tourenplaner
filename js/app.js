@@ -315,14 +315,16 @@ function gmaps(D) {
 // Eigenes Hotel (Wunsch 2026-10-19): frei eingetragen (Name und/oder Adresse), gilt für die Übernachtung der Woche,
 // solange der Übernachtungsort derselbe bleibt. Google Maps bekommt nur Hotelname/-adresse und Ort (keine Kundendaten).
 const meinHotel = (PL, D) => { const h = PL && PL.meinHotel; return h && h.name && D.hotel && h.ort === D.hotel.ort ? h.name : ""; };
-const hotelSuche = (h, name) => name + (name.toLowerCase().includes(h.ort.toLowerCase()) ? "" : ", " + h.plz + " " + h.ort);
+// Ohne Komma und ohne Ortsnamen wird der Übernachtungsort angehängt; mit Komma („Name, Ort“) gilt die Eingabe so, wie sie ist
+const hotelSuche = (h, name) => name + (name.includes(",") || name.toLowerCase().includes(h.ort.toLowerCase()) ? "" : ", " + h.plz + " " + h.ort);
 const mapsSuche = q => "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(q);
 const mapsNavi = q => "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(q) + "&travelmode=driving";
 function hotelHTML(PL, D, di) {
   const h = D.hotel, hn = meinHotel(PL, D), frueher = !hn && PL.meinHotel && PL.meinHotel.name ? PL.meinHotel : null, neu = ' target="_blank" rel="noopener"';
-  return `<div class="hotel"><strong>${hn ? "Mein Hotel: " + esc(hn) : "Hotel in " + esc(h.ort)}</strong><span>${hn ? "in " + esc(h.ort) + " · " : ""}bis ${S().hotelMax} € mit Frühstück${S().parking ? ", mit Parkplatz" : ""}</span>
+  return `<div class="hotel"><strong>${hn ? "Mein Hotel: " + esc(hn) : "Hotel in " + esc(h.ort)}</strong><span>bis ${S().hotelMax} € mit Frühstück${S().parking ? ", mit Parkplatz" : ""}</span>
    ${frueher ? `<span class="warn">Eingetragen war „${esc(frueher.name)}“ in ${esc(frueher.ort)} – die Übernachtung ist jetzt in ${esc(h.ort)}.</span>` : ""}
    <div class="hotelzeile"><input id="hotelname" value="${esc(hn)}" placeholder="Mein Hotel: Name oder Adresse" aria-label="Mein Hotel: Name oder Adresse" autocomplete="off" enterkeyhint="done"><button data-a="hotelsetzen" data-d="${di}">Speichern</button></div>
+   <span>Liegt das Hotel nicht in ${esc(h.ort)}, den Ort mit Komma dazuschreiben (z. B. „Hotelname, Meppen“).</span>
    <div class="kontakt">${hn ? `<a class="pill" href="${mapsNavi(hotelSuche(h, hn))}"${neu}>${ICON.navi}Navi zum Hotel</a><a class="pill" href="${mapsSuche(hotelSuche(h, hn))}"${neu}>In Google Maps zeigen</a>` : ""}<a class="pill" href="${mapsSuche("Hotel " + h.plz + " " + h.ort)}"${neu}>Hotels in ${esc(h.ort)} in Google Maps</a><a href="${bookingUrl(h, D.date)}"${neu}>Passende Hotels bei Booking.com</a></div></div>`;
 }
 // Eingetragenes Hotel speichern (leeres Feld = wieder löschen)
@@ -484,10 +486,10 @@ function renderPlan() {
     const label = (D.type === "ov1" ? "Übernachtungstour · Tag 1" : D.type === "ov2" ? "Übernachtungstour · Tag 2" : "Tagestour") + (D.beendet ? " · beendet" : "");
     const istHeute = D.date === today();
     const nBes = P.anzahlBesuche(D.stops), nPriv = D.stops.length - nBes;
-    const tagSumme = D.stops.length ? `<span class="tagsum">${nBes} ${nBes === 1 ? "Besuch" : "Besuche"}${nPriv ? " + " + nPriv + " pers. Termin" : ""} · ${D.type === "ov1" ? "Ende ca. " + hhmm(sim.end) + (D.hotel ? " · Hotel in " + esc(D.hotel.ort) : "") : "zurück ca. " + hhmm(sim.end)}</span>` : "";
+    const tagSumme = D.stops.length ? `<span class="tagsum">${nBes} ${nBes === 1 ? "Besuch" : "Besuche"}${nPriv ? " + " + nPriv + " pers. Termin" : ""} · ${D.type === "ov1" ? "Ende ca. " + hhmm(sim.end) + (D.hotel ? (meinHotel(PL, D) ? " · Hotel: " + esc(meinHotel(PL, D)) : " · Hotel in " + esc(D.hotel.ort)) : "") : "zurück ca. " + hhmm(sim.end)}</span>` : "";
     html += `<article class="day ${D.type}${istHeute ? " heute" : ""}" id="tag-${D.date}" style="--dc:var(--d${di})"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span>${istHeute ? `<span class="heutemk">Heute</span>` : ""}<span class="kind">${label}</span>${tagSumme}</header>`;
     if (!D.stops.length) { html += D.beendet ? `<p class="muted">Tag beendet – keine weiteren Besuche.</p><div class="row">${tagOeffnenKnopf(PL.week, di)}</div>${pneuKnopf(D.date)}</article>` : `<p class="muted">Keine passenden Kunden gefunden.</p>${pneuKnopf(D.date)}</article>`; return; }
-    const startName = D.type === "ov2" ? (meinHotel(PL, D) ? esc(meinHotel(PL, D)) + " (" + esc(D.hotel.ort) + ")" : "Hotel in " + esc(D.hotel.ort)) : "Bremen";
+    const startName = D.type === "ov2" ? (meinHotel(PL, D) ? esc(meinHotel(PL, D)) : "Hotel in " + esc(D.hotel.ort)) : "Bremen";
     html += `<ol class="stops"><li class="node">${hhmm(sim.depart)} Abfahrt ${startName}</li>`;
     sim.legs.forEach((L, i) => { const nr = i + 1;
       const c = byId(L.id);
@@ -502,7 +504,7 @@ function renderPlan() {
        ${done ? "" : alts.length ? alternativenHTML(di, c, alts) : `<div class="alt">Keine Alternative in der Nähe gefunden</div>`}</li>`;
     });
     if (D.type === "ov1") {
-      html += `<li class="node">ca. ${hhmm(sim.end)} Ende · Übernachtung in ${esc(D.hotel.ort)}</li></ol>
+      html += `<li class="node">ca. ${hhmm(sim.end)} Ende · ${meinHotel(PL, D) ? "Übernachtung: " + esc(meinHotel(PL, D)) : "Übernachtung in " + esc(D.hotel.ort)}</li></ol>
       ${hotelHTML(PL, D, di)}`;
     }
     else html += `<li class="leg"><span class="drv">${Math.round(sim.backKm)} km · ${Math.round(sim.backMin)} Min.</span></li><li class="node">ca. ${hhmm(sim.end)} zurück in Bremen</li></ol>`;
