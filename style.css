@@ -229,3 +229,8 @@ details.planen{flex:1 1 22rem;max-width:36rem}
 .planfelder.einzeln{grid-template-columns:minmax(0,1fr)}
 /* Nach unten wischen zum Aktualisieren */
 #ziehen{position:fixed;top:env(safe-area-inset-top,0px);left:50%;transform:translate(-50%,-110%);z-index:21;background:var(--surf);color:var(--ink);border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px;padding:.55rem 1rem;font-size:.95rem;box-shadow:0 2px 8px rgba(0,0,0,.15);white-space:nowrap;pointer-events:none;transition:transform .12s}
+/* Eigenes Hotel eintragen */
+.hotelzeile{display:flex;gap:.4rem;margin:.45rem 0 .25rem}
+.hotelzeile input{flex:1;min-width:0;box-sizing:border-box;min-height:44px;font-size:16px;padding:.4rem .6rem;border:1px solid var(--line);border-radius:8px;background:var(--surf);color:var(--ink)}
+.hotelzeile button{box-sizing:border-box;min-height:44px}
+.hotel .kontakt{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}

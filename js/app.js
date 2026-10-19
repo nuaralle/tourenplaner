@@ -56,6 +56,7 @@ function platzFuer(mon) {
 }
 // Woche in die Liste aufnehmen (ersetzt dieselbe Woche) und auf Wunsch anzeigen
 function planSetzen(plan, zeigen = true) {
+  const vorher = planVon(plan.week); if (vorher && vorher.meinHotel && !plan.meinHotel) plan.meinHotel = vorher.meinHotel; // eingetragenes Hotel bleibt beim Neuplanen
   DATA.plaene = PLAENE().filter(p => p.week !== plan.week).concat(plan).sort((a, b) => a.week.localeCompare(b.week));
   plan.fixed = TERMINE(); if (zeigen) DATA.plan = plan;
 }
@@ -305,10 +306,31 @@ const AUF = {};
 const handy = () => matchMedia("(max-width:640px)").matches;
 const offenAttr = (key, standard) => (AUF[key] ?? standard) ? "open" : "";
 function gmaps(D) {
-  const pts = []; const e = P.dayEnds(D); pts.push(e.start === HOME ? S().start : (D.hotel.plz + " " + D.hotel.ort));
+  const hn = meinHotel(PLAN(), D), hz = () => hn ? hotelSuche(D.hotel, hn) : D.hotel.plz + " " + D.hotel.ort;
+  const pts = []; const e = P.dayEnds(D); pts.push(e.start === HOME ? S().start : hz());
   for (const id of D.stops) { const c = byId(id); if (c) pts.push(`${c.str}, ${c.plz} ${c.ort}`); }
-  if (e.end) pts.push(S().start);
+  if (e.end) pts.push(S().start); else if (D.type === "ov1" && D.hotel && hn) pts.push(hz()); // Tag 1 endet am eingetragenen Hotel
   return "https://www.google.com/maps/dir/" + pts.map(encodeURIComponent).join("/");
+}
+// Eigenes Hotel (Wunsch 2026-10-19): frei eingetragen (Name und/oder Adresse), gilt für die Übernachtung der Woche,
+// solange der Übernachtungsort derselbe bleibt. Google Maps bekommt nur Hotelname/-adresse und Ort (keine Kundendaten).
+const meinHotel = (PL, D) => { const h = PL && PL.meinHotel; return h && h.name && D.hotel && h.ort === D.hotel.ort ? h.name : ""; };
+const hotelSuche = (h, name) => name + (name.toLowerCase().includes(h.ort.toLowerCase()) ? "" : ", " + h.plz + " " + h.ort);
+const mapsSuche = q => "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(q);
+const mapsNavi = q => "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(q) + "&travelmode=driving";
+function hotelHTML(PL, D, di) {
+  const h = D.hotel, hn = meinHotel(PL, D), frueher = !hn && PL.meinHotel && PL.meinHotel.name ? PL.meinHotel : null, neu = ' target="_blank" rel="noopener"';
+  return `<div class="hotel"><strong>${hn ? "Mein Hotel: " + esc(hn) : "Hotel in " + esc(h.ort)}</strong><span>${hn ? "in " + esc(h.ort) + " · " : ""}bis ${S().hotelMax} € mit Frühstück${S().parking ? ", mit Parkplatz" : ""}</span>
+   ${frueher ? `<span class="warn">Eingetragen war „${esc(frueher.name)}“ in ${esc(frueher.ort)} – die Übernachtung ist jetzt in ${esc(h.ort)}.</span>` : ""}
+   <div class="hotelzeile"><input id="hotelname" value="${esc(hn)}" placeholder="Mein Hotel: Name oder Adresse" aria-label="Mein Hotel: Name oder Adresse" autocomplete="off" enterkeyhint="done"><button data-a="hotelsetzen" data-d="${di}">Speichern</button></div>
+   <div class="kontakt">${hn ? `<a class="pill" href="${mapsNavi(hotelSuche(h, hn))}"${neu}>${ICON.navi}Navi zum Hotel</a><a class="pill" href="${mapsSuche(hotelSuche(h, hn))}"${neu}>In Google Maps zeigen</a>` : ""}<a class="pill" href="${mapsSuche("Hotel " + h.plz + " " + h.ort)}"${neu}>Hotels in ${esc(h.ort)} in Google Maps</a><a href="${bookingUrl(h, D.date)}"${neu}>Passende Hotels bei Booking.com</a></div></div>`;
+}
+// Eingetragenes Hotel speichern (leeres Feld = wieder löschen)
+function hotelSetzen(di) {
+  const PL = PLAN(), D = PL && PL.days[di], el = $("#hotelname"); if (!D || !D.hotel || !el) return;
+  const name = el.value.trim().replace(/ +/g, " ").slice(0, 200);
+  if (name) PL.meinHotel = { ort: D.hotel.ort, name }; else delete PL.meinHotel;
+  geaendert(); toast(name ? "Hotel gespeichert: " + name : "Eingetragenes Hotel gelöscht");
 }
 function bookingUrl(h, date) {
   const ci = date, co = iso(addDays(parseISO(date), 1));
@@ -465,7 +487,7 @@ function renderPlan() {
     const tagSumme = D.stops.length ? `<span class="tagsum">${nBes} ${nBes === 1 ? "Besuch" : "Besuche"}${nPriv ? " + " + nPriv + " pers. Termin" : ""} · ${D.type === "ov1" ? "Ende ca. " + hhmm(sim.end) + (D.hotel ? " · Hotel in " + esc(D.hotel.ort) : "") : "zurück ca. " + hhmm(sim.end)}</span>` : "";
     html += `<article class="day ${D.type}${istHeute ? " heute" : ""}" id="tag-${D.date}" style="--dc:var(--d${di})"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span>${istHeute ? `<span class="heutemk">Heute</span>` : ""}<span class="kind">${label}</span>${tagSumme}</header>`;
     if (!D.stops.length) { html += D.beendet ? `<p class="muted">Tag beendet – keine weiteren Besuche.</p><div class="row">${tagOeffnenKnopf(PL.week, di)}</div>${pneuKnopf(D.date)}</article>` : `<p class="muted">Keine passenden Kunden gefunden.</p>${pneuKnopf(D.date)}</article>`; return; }
-    const startName = D.type === "ov2" ? "Hotel in " + esc(D.hotel.ort) : "Bremen";
+    const startName = D.type === "ov2" ? (meinHotel(PL, D) ? esc(meinHotel(PL, D)) + " (" + esc(D.hotel.ort) + ")" : "Hotel in " + esc(D.hotel.ort)) : "Bremen";
     html += `<ol class="stops"><li class="node">${hhmm(sim.depart)} Abfahrt ${startName}</li>`;
     sim.legs.forEach((L, i) => { const nr = i + 1;
       const c = byId(L.id);
@@ -481,7 +503,7 @@ function renderPlan() {
     });
     if (D.type === "ov1") {
       html += `<li class="node">ca. ${hhmm(sim.end)} Ende · Übernachtung in ${esc(D.hotel.ort)}</li></ol>
-      <div class="hotel"><strong>Hotel in ${esc(D.hotel.ort)}</strong><span>bis ${S().hotelMax} € mit Frühstück${S().parking ? ", mit Parkplatz" : ""}</span><a href="${bookingUrl(D.hotel, D.date)}" target="_blank" rel="noopener">Passende Hotels bei Booking.com</a></div>`;
+      ${hotelHTML(PL, D, di)}`;
     }
     else html += `<li class="leg"><span class="drv">${Math.round(sim.backKm)} km · ${Math.round(sim.backMin)} Min.</span></li><li class="node">ca. ${hhmm(sim.end)} zurück in Bremen</li></ol>`;
     const lim = P.dayEnds(D).limit; const over = lim != null && sim.end > lim;
@@ -576,7 +598,7 @@ function weekSummary() {
   PL.days.forEach(D => { if (D.type === "home" || !D.stops.length) return; const s = P.simDay(D); kmT += s.km; vis += P.anzahlBesuche(D.stops); });
   const hotel = PL.days.find(D => D.type === "ov1"); const nFixAll = PL.days.reduce((a, D) => a + D.stops.filter(id => P.istFix(id, D.day) && !P.istPrivat(id)).length, 0);
   return `<aside class="summary"><div><b>${vis}</b><span>Besuche geplant, davon ${nFixAll} fest bestätigt</span></div><div><b>${Math.round(kmT).toLocaleString("de-DE")} km</b><span>geschätzte Fahrstrecke</span></div>
-   <div><b>${hotel && hotel.hotel ? esc(hotel.hotel.ort) : "–"}</b><span>${hotel ? "Übernachtung " + WD[hotel.day] : PL.uebernachtung === "keine" ? "keine Übernachtung" : "keine Übernachtung möglich"}</span>${hotel ? "" : `<span${PL.uebernachtung === "keine" ? "" : ` class="warn"`}>${esc(ovGrund(PL))}</span>`}</div>
+   <div><b>${hotel && hotel.hotel ? esc(meinHotel(PL, hotel) || hotel.hotel.ort) : "–"}</b><span>${hotel ? "Übernachtung " + WD[hotel.day] : PL.uebernachtung === "keine" ? "keine Übernachtung" : "keine Übernachtung möglich"}</span>${hotel ? "" : `<span${PL.uebernachtung === "keine" ? "" : ` class="warn"`}>${esc(ovGrund(PL))}</span>`}</div>
    <div><b>${eur(PL.days.reduce((a, D) => a + D.stops.reduce((x, id) => x + ((byId(id) || {}).uPlan || 0), 0), 0))}</b><span>Umsatz ${S().umsatzJahr} der geplanten Kunden</span></div>
    <p class="muted">Freitag: Home-Office</p></aside>`;
 }
@@ -1688,6 +1710,7 @@ document.addEventListener("click", async e => {
     if (a === "sichern") { const n = await sicherungAnlegen(uhrzeitJetzt()); render(); toast("Gesichert: " + n); }
     if (a === "tagab") tagAbschliessenDialog(b.dataset.week, +b.dataset.d);
     if (a === "tagende") tagBeenden(b.dataset.week, +b.dataset.d);
+    if (a === "hotelsetzen") hotelSetzen(+b.dataset.d);
     if (a === "tagauf") tagOeffnen(b.dataset.week, +b.dataset.d);
     if (a === "wzeigen") { DATA.plan = planVon(b.dataset.week) || DATA.plan; persist(false); render(); scrollTo(0, 0); }
     if (a === "heute") { const el = document.getElementById("tag-" + today()); if (el) el.scrollIntoView({ block: "start" }); }

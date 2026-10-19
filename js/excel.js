@@ -148,6 +148,7 @@ export function leseStand(XLSX, daten) {
     if (z["Schlüssel"] === "sicherung") sicherung = datum(z.Wert);
     if (z["Schlüssel"] === "kalLoeschen") try { kalLoeschen = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "abgeschlossen") try { const tage = new Set(JSON.parse(z.Wert) || []); plaene.forEach(p => p.days.forEach(D => { if (tage.has(D.date)) D.abgeschlossen = true; })); } catch (e) { /* egal */ }
+    if (z["Schlüssel"] === "meinHotel") try { const h = JSON.parse(z.Wert) || {}; plaene.forEach(p => { const x = h[p.week]; if (x && x.name && x.ort) p.meinHotel = { ort: String(x.ort), name: String(x.name) }; }); } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "beendet") try { const tage = new Set(JSON.parse(z.Wert) || []); plaene.forEach(p => p.days.forEach(D => { if (tage.has(D.date)) D.beendet = true; })); } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "neukundenAus") try { neukundenAus = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "spaltenArten") try { spaltenArten = JSON.parse(z.Wert) || {}; } catch (e) { /* egal */ }
@@ -259,6 +260,7 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
     { "Schlüssel": "sicherung", "Wert": sicherung || "" },
     { "Schlüssel": "neukundenAus", "Wert": JSON.stringify(neukundenAus || []) },
     { "Schlüssel": "abgeschlossen", "Wert": JSON.stringify(wochen.flatMap(p => p.days.filter(D => D.abgeschlossen).map(D => D.date))) },
+    { "Schlüssel": "meinHotel", "Wert": JSON.stringify(Object.fromEntries(wochen.filter(p => p.meinHotel).map(p => [p.week, p.meinHotel]))) },
     { "Schlüssel": "beendet", "Wert": JSON.stringify(wochen.flatMap(p => p.days.filter(D => D.beendet).map(D => D.date))) }], { header: ["Schlüssel", "Wert"] }), "Intern");
   return XLSX.write(wb, { type: "array", bookType: "xlsx", compression: true });
 }
