@@ -175,11 +175,12 @@ export const ovMoeglich = (u, abTag = 0) => ovGueltig(u) && +u[0] >= abTag;
 // belegt: Kunden aus anderen geplanten Wochen (werden in dieser Woche nicht noch einmal eingeplant)
 // abTag (Wunsch 2026-10-17): Woche erst ab diesem Tag planen, die Tage davor bleiben frei (type "frei").
 // uebernachtung "keine": ohne Übernachtung (Woche ab Donnerstag oder die Übernachtung der Woche war schon)
-export function planWeek(mondayISO, excluded, fixed, uebernachtung, belegt, abTag = 0) {
+// freiTage: Tage, die nicht geplant werden (z. B. „Tag beenden“ – der Tag bleibt, wie er ist)
+export function planWeek(mondayISO, excluded, fixed, uebernachtung, belegt, abTag = 0, freiTage = []) {
   if (uebernachtung !== "keine" && !ovGueltig(uebernachtung)) throw new Error("Bitte zuerst bei „Übernachtung“ die Nacht wählen.");
   if (uebernachtung !== "keine" && !ovMoeglich(uebernachtung, abTag)) throw new Error("Diese Nacht ist bei diesem Starttag nicht möglich.");
   setzeBelegt(belegt);
-  const plan = planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag);
+  const plan = planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag, freiTage);
   plan.uebernachtung = uebernachtung;
   tauschPruefung(plan); // volle Tage: deutlich wichtigere Kunden in der Nähe gegen schwächere tauschen
   for (const D of plan.days) feinschliff(D); // zum Schluss: schnellste Reihenfolge je Tag
@@ -194,12 +195,12 @@ export function planeWochen(startMonISO, anzahl, fixed, belegt = [], uebernachtu
   }
   return plaene;
 }
-function planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag = 0) {
+function planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag = 0, freiTage = []) {
   fixed = fixed || {}; setFix(fixed, mondayISO); setzeStichtag(mondayISO);
   const ex = new Set(excluded || []); const used = new Set();
   const mon = parseISO(mondayISO);
   // Tage vor dem Starttag bleiben frei (keine Besuche, auch keine festen Termine)
-  const days = [0, 1, 2, 3].map(i => ({ date: iso(addDays(mon, i)), day: i, type: i < abTag ? "frei" : "tour", stops: [], hotel: null }));
+  const days = [0, 1, 2, 3].map(i => ({ date: iso(addDays(mon, i)), day: i, type: i < abTag || freiTage.includes(i) ? "frei" : "tour", stops: [], hotel: null }));
   days.push({ date: iso(addDays(mon, 4)), day: 4, type: "home", stops: [] });
   const pool = () => CUST.filter(c => !c.out && c.lat != null && !used.has(c.id) && !ex.has(c.id) && !c.planHold && !gesperrt(c.id));
   const due = el;

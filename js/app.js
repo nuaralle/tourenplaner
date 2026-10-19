@@ -388,6 +388,21 @@ function tagAbschliessen(week, di) {
   D.abgeschlossen = true; geaendert();
   toast(`${WD[D.day]} abgeschlossen: ${n} besucht${nicht ? ", " + nicht + " nicht angetroffen" : ""}`);
 }
+// „Tag beenden“ (Wunsch 2026-10-19, wenn es keine Termine gibt): danach plant die App an diesem Tag nichts mehr dazu.
+// Es bleiben feste Termine, persönliche Termine und schon erfasste Besuche; die übrigen Kunden sind wieder frei für spätere Planungen.
+const bleibtBeimBeenden = (D, id) => P.istPrivat(id) || (TERMINE()[id] && TERMINE()[id].date === D.date) || besucht(id, D.date);
+function tagBeenden(week, di) {
+  const p = planVon(week), D = p && p.days[di]; if (!D) return;
+  const raus = D.stops.filter(id => !bleibtBeimBeenden(D, id));
+  if (!confirm(`${WD[D.day]}, ${fmtD(D.date)} beenden?` + (raus.length ? ` ${raus.length} ${raus.length === 1 ? "Kunde ohne festen Termin wird" : "Kunden ohne festen Termin werden"} herausgenommen (sie werden später wieder eingeplant).` : "") + " Danach plant die App an diesem Tag nichts mehr dazu.")) return;
+  D.stops = D.stops.filter(id => !raus.includes(id)); D.beendet = true;
+  geaendert(); toast(`${WD[D.day]} beendet` + (raus.length ? `: ${raus.length} ${raus.length === 1 ? "Kunde" : "Kunden"} herausgenommen` : ""));
+}
+function tagOeffnen(week, di) {
+  const p = planVon(week), D = p && p.days[di]; if (!D) return;
+  delete D.beendet; geaendert(); toast(`${WD[D.day]} wieder offen – beim nächsten „Neu planen“ wird der Tag wieder aufgefüllt`);
+}
+const tagOeffnenKnopf = (week, di) => `<button class="ghost" data-a="tagauf" data-week="${week}" data-d="${di}">Tag wieder öffnen</button>`;
 // Nur die Reihenfolge eines Tages verbessern (dieselben Kunden, schnellste Reihenfolge)
 function reihenfolgeVerbessern(di) {
   const D = PLAN() && PLAN().days[di]; if (!D) return;
@@ -444,12 +459,12 @@ function renderPlan() {
     if (D.type === "frei") { html += `<article class="day home frei" id="tag-${D.date}"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span></header><p class="muted">Nicht geplant${D.day < s0 ? " – die Woche beginnt am " + WD[s0] : ""}.</p>${homeTermine(D.date, "Fester Termin an diesem freien Tag (wird nicht zusätzlich eingeplant):")}${pneuKnopf(D.date)}</article>`; return; }
     const sim = P.simDay(D);
     const nFix = D.stops.filter(id => P.istFix(id, D.day)).length;
-    const label = D.type === "ov1" ? "Übernachtungstour · Tag 1" : D.type === "ov2" ? "Übernachtungstour · Tag 2" : "Tagestour";
+    const label = (D.type === "ov1" ? "Übernachtungstour · Tag 1" : D.type === "ov2" ? "Übernachtungstour · Tag 2" : "Tagestour") + (D.beendet ? " · beendet" : "");
     const istHeute = D.date === today();
     const nBes = P.anzahlBesuche(D.stops), nPriv = D.stops.length - nBes;
     const tagSumme = D.stops.length ? `<span class="tagsum">${nBes} ${nBes === 1 ? "Besuch" : "Besuche"}${nPriv ? " + " + nPriv + " pers. Termin" : ""} · ${D.type === "ov1" ? "Ende ca. " + hhmm(sim.end) + (D.hotel ? " · Hotel in " + esc(D.hotel.ort) : "") : "zurück ca. " + hhmm(sim.end)}</span>` : "";
     html += `<article class="day ${D.type}${istHeute ? " heute" : ""}" id="tag-${D.date}" style="--dc:var(--d${di})"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span>${istHeute ? `<span class="heutemk">Heute</span>` : ""}<span class="kind">${label}</span>${tagSumme}</header>`;
-    if (!D.stops.length) { html += `<p class="muted">Keine passenden Kunden gefunden.</p>${pneuKnopf(D.date)}</article>`; return; }
+    if (!D.stops.length) { html += D.beendet ? `<p class="muted">Tag beendet – keine weiteren Besuche.</p><div class="row">${tagOeffnenKnopf(PL.week, di)}</div>${pneuKnopf(D.date)}</article>` : `<p class="muted">Keine passenden Kunden gefunden.</p>${pneuKnopf(D.date)}</article>`; return; }
     const startName = D.type === "ov2" ? "Hotel in " + esc(D.hotel.ort) : "Bremen";
     html += `<ol class="stops"><li class="node">${hhmm(sim.depart)} Abfahrt ${startName}</li>`;
     sim.legs.forEach((L, i) => { const nr = i + 1;
@@ -470,7 +485,7 @@ function renderPlan() {
     }
     else html += `<li class="leg"><span class="drv">${Math.round(sim.backKm)} km · ${Math.round(sim.backMin)} Min.</span></li><li class="node">ca. ${hhmm(sim.end)} zurück in Bremen</li></ol>`;
     const lim = P.dayEnds(D).limit; const over = lim != null && sim.end > lim;
-    html += `<footer><span>${Math.round(sim.km)} km · ${nBes} Besuche · ${nFix - nPriv} fix</span>${over ? `<span class="warn">später als ${hhmm(lim)} zurück</span>` : P.wunschBis(D) && D.type !== "ov1" ? `<span class="muted">Ausnahme Wunschzeit: Rückkehr bis ${hhmm(P.wunschBis(D))} Uhr</span>` : ""}${D.date <= today() && D.stops.some(id => roh(id) && !besucht(id, D.date)) && !D.abgeschlossen ? `<button class="pri" data-a="tagab" data-week="${PL.week}" data-d="${di}">Tag abschließen</button>` : ""}${D.date >= today() && D.stops.length >= 3 ? `<button class="ghost" data-a="feinschliff" data-d="${di}">Reihenfolge verbessern</button>` : ""}${pneuKnopf(D.date)}<a href="${gmaps(D)}" target="_blank" rel="noopener">Route in Google Maps</a></footer></article>`;
+    html += `<footer><span>${Math.round(sim.km)} km · ${nBes} Besuche · ${nFix - nPriv} fix</span>${over ? `<span class="warn">später als ${hhmm(lim)} zurück</span>` : P.wunschBis(D) && D.type !== "ov1" ? `<span class="muted">Ausnahme Wunschzeit: Rückkehr bis ${hhmm(P.wunschBis(D))} Uhr</span>` : ""}${D.date <= today() && D.stops.some(id => roh(id) && !besucht(id, D.date)) && !D.abgeschlossen ? `<button class="pri" data-a="tagab" data-week="${PL.week}" data-d="${di}">Tag abschließen</button>` : ""}${D.date >= today() && D.stops.length >= 3 ? `<button class="ghost" data-a="feinschliff" data-d="${di}">Reihenfolge verbessern</button>` : ""}${D.beendet ? `<span class="muted">Tag beendet</span>${tagOeffnenKnopf(PL.week, di)}` : D.date >= today() ? `<button data-a="tagende" data-week="${PL.week}" data-d="${di}">Tag beenden</button>` : ""}${pneuKnopf(D.date)}<a href="${gmaps(D)}" target="_blank" rel="noopener">Route in Google Maps</a></footer></article>`;
   });
   return html + `</div>`;
 }
@@ -537,8 +552,10 @@ function privatSpeichern(id) {
     const D = PL.days[di];
     if (D.type === "frei") D.type = "tour"; // Termin an einem freien Tag: an diesem Tag wird doch gearbeitet
     if (!D.stops.includes(id)) D.stops.push(id);
-    aufbereiten(); P.setzeBelegt(belegtFuer(PL.week)); P.planeTagUm(PL, di);
-    zusatz = " – " + WD[D.day] + " um den Termin neu geplant (" + P.anzahlBesuche(D.stops) + " Besuche)" + (P.simDay(D).lateFix ? ", Zeiten bitte prüfen" : "");
+    aufbereiten(); P.setzeBelegt(belegtFuer(PL.week));
+    if (D.beendet) { P.setFix(T, PL.week); P.resequence(D); zusatz = " – " + WD[D.day] + " ist beendet: nur der Termin kommt dazu"; } // beendeter Tag: nichts dazuplanen
+    else { P.planeTagUm(PL, di); zusatz = " – " + WD[D.day] + " um den Termin neu geplant (" + P.anzahlBesuche(D.stops) + " Besuche)"; }
+    zusatz += P.simDay(D).lateFix ? ", Zeiten bitte prüfen" : "";
   } else if (!PL) zusatz = " – drumherum geplant wird, sobald die Woche geplant wird";
   geaendert();
   toast("Termin „" + f.betreff + "“ " + WDS[wochentag(f.date)] + " " + fmtD(f.date) + ", " + f.time + "–" + f.ende + " Uhr" + zusatz);
@@ -839,7 +856,7 @@ function openCustomer(id) {
 function removeDialog(di, id) {
   const c = byId(id), D = PLAN().days[di];
   dlg(`<header class="dh"><h3>${esc(c.n1)} aus der Planung nehmen</h3><button value="x" class="ghost">Abbrechen</button></header>
-   <p class="muted">Für ${WD[D.day]} wird automatisch ein passender Ersatz in der Nähe vorgeschlagen.</p>
+   <p class="muted">${D.beendet ? `${WD[D.day]} ist beendet – es wird kein Ersatz eingeplant.` : `Für ${WD[D.day]} wird automatisch ein passender Ersatz in der Nähe vorgeschlagen.`}</p>
    <div class="row wrap"><button class="pri" value="rmweek" data-id="${id}" data-d="${di}">Nur diese Woche</button>
    <button value="rmhold" data-id="${id}" data-d="${di}">Dauerhaft nicht mehr einplanen</button></div>
    <p class="muted">„Dauerhaft“ können Sie in der Kundenansicht jederzeit rückgängig machen.</p>`);
@@ -850,10 +867,10 @@ function removeStop(di, id, hold) {
   D.stops = D.stops.filter(x => x !== id); PL.excluded = [...new Set((PL.excluded || []).concat(id))];
   if (hold) roh(id).hold = true;
   aufbereiten();
-  const rep = P.findReplacement(PL, D, removed);
+  const rep = D.beendet ? null : P.findReplacement(PL, D, removed); // beendeter Tag: kein Ersatz
   if (rep) D.stops = rep.seq;
   geaendert();
-  toast(rep ? "Ersatz: " + rep.c.n1 + " (" + rep.c.ort + ")" : "Kein passender Ersatz in der Nähe gefunden");
+  toast(rep ? "Ersatz: " + rep.c.n1 + " (" + rep.c.ort + ")" : D.beendet ? "Aus der Tour genommen (Tag beendet, kein Ersatz)" : "Kein passender Ersatz in der Nähe gefunden");
 }
 // Angekreuzte Alternativen (eine oder mehrere) statt des Kunden einplanen – an seiner Stelle, in der angezeigten Reihenfolge
 function alternativeNehmen(di, id, altIds) {
@@ -965,8 +982,10 @@ function terminSpeichern(id) {
     PL.excluded = (PL.excluded || []).filter(x => x !== id);
     if (!D.stops.includes(id)) D.stops.push(id);
     // Tag um den Termin herum neu planen (feste Termine bleiben, passende Kunden in der Nähe kommen dazu)
-    aufbereiten(); P.setzeBelegt(belegtFuer(PL.week)); const r = P.planeTagUm(PL, di);
-    zusatz = " – " + WD[D.day] + " um den Termin neu geplant (" + (r ? r.neu : D.stops.length) + " Besuche)" + (P.simDay(D).lateFix ? ", Zeiten bitte prüfen" : "");
+    aufbereiten(); P.setzeBelegt(belegtFuer(PL.week));
+    if (D.beendet) { P.setFix(T, PL.week); P.resequence(D); zusatz = " – " + WD[D.day] + " ist beendet: nur der Termin kommt dazu"; } // beendeter Tag: nichts dazuplanen
+    else { const r = P.planeTagUm(PL, di); zusatz = " – " + WD[D.day] + " um den Termin neu geplant (" + (r ? r.neu : D.stops.length) + " Besuche)"; }
+    zusatz += P.simDay(D).lateFix ? ", Zeiten bitte prüfen" : "";
   }
   geaendert();
   const h = terminHinweis(byId(id), d, t), text = "Termin " + WDS[wochentag(d)] + " " + fmtD(d) + ", " + t + " Uhr";
@@ -1154,6 +1173,10 @@ function planeWoche(mon, abTag, nacht) {
   if (abTag > 3) { toast("In dieser Woche ist kein Tourtag mehr übrig – bitte eine spätere Woche wählen"); return false; }
   const behalten = alt ? alt.days.map((D, i) => i).filter(i => i < abTag && alt.days[i].date < today() && alt.days[i].stops.length) : [];
   if (alt && behalten.some(i => alt.days[i].type === "ov1")) { const i2 = alt.days.findIndex(D => D.type === "ov2"); if (i2 >= abTag) { behalten.push(i2); abTag = i2 + 1; } }
+  // „Tag beenden“ (Wunsch 2026-10-19): beendete Tage bleiben, wie sie sind (bei einer Übernachtung beide Tage)
+  const beendet = alt ? alt.days.map((D, i) => i).filter(i => alt.days[i].beendet && !behalten.includes(i)) : [];
+  if (beendet.some(i => alt.days[i].type === "ov1" || alt.days[i].type === "ov2")) alt.days.forEach((D, i) => { if ((D.type === "ov1" || D.type === "ov2") && !behalten.includes(i) && !beendet.includes(i)) beendet.push(i); });
+  behalten.push(...beendet);
   const ovSchon = alt && behalten.some(i => alt.days[i].type === "ov1" || alt.days[i].type === "ov2");
   const n = ovSchon || abTag >= 3 ? "keine" : nacht;
   if (n !== "keine" && !P.ovMoeglich(n, abTag)) {
@@ -1161,10 +1184,11 @@ function planeWoche(mon, abTag, nacht) {
     const g = $("#main .nachtwahl"); if (g) g.scrollIntoView({ block: "center" });
     return false;
   }
+  if (n !== "keine" && n.split("-").map(Number).some(i => beendet.includes(i))) { toast("Die gewählte Nacht liegt an einem beendeten Tag – bitte eine andere Nacht oder „Keine“ wählen"); return false; }
   if (!alt && !platzFuer(mon)) return false;
   aufbereiten();
   // Termine aller Wochen; die Planung nimmt die dieser Woche. Kunden aus den anderen geplanten Wochen kommen nicht doppelt dran.
-  const plan = P.planWeek(mon, alt ? alt.excluded : [], TERMINE(), n, belegtFuer(mon).concat(behalten.flatMap(i => alt.days[i].stops)), abTag);
+  const plan = P.planWeek(mon, alt ? alt.excluded : [], TERMINE(), n, belegtFuer(mon).concat(behalten.flatMap(i => alt.days[i].stops)), abTag, beendet);
   for (const i of behalten) plan.days[i] = alt.days[i];
   planSetzen(plan); return true;
 }
@@ -1663,6 +1687,8 @@ document.addEventListener("click", async e => {
     if (a === "feinschliff") reihenfolgeVerbessern(+b.dataset.d);
     if (a === "sichern") { const n = await sicherungAnlegen(uhrzeitJetzt()); render(); toast("Gesichert: " + n); }
     if (a === "tagab") tagAbschliessenDialog(b.dataset.week, +b.dataset.d);
+    if (a === "tagende") tagBeenden(b.dataset.week, +b.dataset.d);
+    if (a === "tagauf") tagOeffnen(b.dataset.week, +b.dataset.d);
     if (a === "wzeigen") { DATA.plan = planVon(b.dataset.week) || DATA.plan; persist(false); render(); scrollTo(0, 0); }
     if (a === "heute") { const el = document.getElementById("tag-" + today()); if (el) el.scrollIntoView({ block: "start" }); }
     if (a === "spalteneu") spalteHinzufuegen();

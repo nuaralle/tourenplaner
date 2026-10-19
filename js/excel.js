@@ -148,6 +148,7 @@ export function leseStand(XLSX, daten) {
     if (z["Schlüssel"] === "sicherung") sicherung = datum(z.Wert);
     if (z["Schlüssel"] === "kalLoeschen") try { kalLoeschen = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "abgeschlossen") try { const tage = new Set(JSON.parse(z.Wert) || []); plaene.forEach(p => p.days.forEach(D => { if (tage.has(D.date)) D.abgeschlossen = true; })); } catch (e) { /* egal */ }
+    if (z["Schlüssel"] === "beendet") try { const tage = new Set(JSON.parse(z.Wert) || []); plaene.forEach(p => p.days.forEach(D => { if (tage.has(D.date)) D.beendet = true; })); } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "neukundenAus") try { neukundenAus = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "spaltenArten") try { spaltenArten = JSON.parse(z.Wert) || {}; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "uebernachtung") { // je Woche { "JJJJ-MM-TT": "auto" | "0-1" … } (ältere Stände: ein Wert für alle)
@@ -257,7 +258,8 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ "Schlüssel": "kalLoeschen", "Wert": JSON.stringify(kalLoeschen || []) }, { "Schlüssel": "uebernachtung", "Wert": JSON.stringify(Object.fromEntries(wochen.map(p => [p.week, p.uebernachtung || "auto"]))) }, { "Schlüssel": "spaltenArten", "Wert": JSON.stringify(spaltenArten || {}) },
     { "Schlüssel": "sicherung", "Wert": sicherung || "" },
     { "Schlüssel": "neukundenAus", "Wert": JSON.stringify(neukundenAus || []) },
-    { "Schlüssel": "abgeschlossen", "Wert": JSON.stringify(wochen.flatMap(p => p.days.filter(D => D.abgeschlossen).map(D => D.date))) }], { header: ["Schlüssel", "Wert"] }), "Intern");
+    { "Schlüssel": "abgeschlossen", "Wert": JSON.stringify(wochen.flatMap(p => p.days.filter(D => D.abgeschlossen).map(D => D.date))) },
+    { "Schlüssel": "beendet", "Wert": JSON.stringify(wochen.flatMap(p => p.days.filter(D => D.beendet).map(D => D.date))) }], { header: ["Schlüssel", "Wert"] }), "Intern");
   return XLSX.write(wb, { type: "array", bookType: "xlsx", compression: true });
 }
 
