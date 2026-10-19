@@ -1772,6 +1772,48 @@ document.addEventListener("change", async e => {
   }
 });
 
+/* ---------- Nach unten wischen zum Aktualisieren (Wunsch 2026-10-19, vor allem für das iPhone) ---------- */
+// Ganz oben auf der Seite nach unten ziehen und loslassen: sofort mit Google Drive abgleichen (sonst jede Minute)
+const ZIEH_MIN = 70; // so weit (Pixel) muss gezogen werden
+async function aktualisieren() {
+  if (!driveBereit()) {
+    // Anmeldung abgelaufen: still erneuern (die Seite kommt danach zurück und gleicht ab)
+    if (G.konfiguriert() && G.warVerbunden() && navigator.onLine) { try { sessionStorage.removeItem("tourenplaner-still"); } catch (e) { /* egal */ } if (stillAnmelden()) return; }
+    toast(navigator.onLine ? "Nicht mit Google verbunden – bitte oben „Mit Google verbinden“ antippen" : "Keine Internetverbindung");
+    return;
+  }
+  const d0 = DATA, zeit0 = DATA && DATA.drive && DATA.drive.modifiedTime;
+  await abgleichen();
+  if (SYNC_FEHLER) toast(SYNC_FEHLER);
+  else if (KONFLIKT || DATA !== d0) return; // Rückfrage bzw. „Aktueller Stand aus Google Drive geladen“ kommt schon
+  else toast(DATA && DATA.drive && DATA.drive.modifiedTime !== zeit0 ? "Änderungen dieses Geräts in Google Drive gespeichert" : "Alles aktuell");
+}
+function ziehenEinrichten() {
+  const el = document.createElement("div"); el.id = "ziehen"; el.setAttribute("aria-hidden", "true"); document.body.appendChild(el);
+  let y0 = null, dy = 0;
+  const zeigen = (text, px) => { el.textContent = text; el.style.transform = `translate(-50%, calc(-100% + ${px}px))`; };
+  const zurueck = () => { el.style.transform = ""; };
+  addEventListener("touchstart", e => {
+    y0 = null; dy = 0;
+    if (e.touches.length !== 1 || scrollY > 0 || $("#dlg").open || SYNC_LAEUFT) return;
+    for (let n = e.target; n && n !== document.body; n = n.parentElement) if (n.scrollTop > 0) return; // Bereich scrollt selbst
+    y0 = e.touches[0].clientY;
+  }, { passive: true });
+  addEventListener("touchmove", e => {
+    if (y0 == null) return;
+    dy = e.touches[0].clientY - y0;
+    if (dy <= 0 || scrollY > 0) { zurueck(); return; }
+    zeigen(dy >= ZIEH_MIN ? "Loslassen zum Aktualisieren" : "Zum Aktualisieren weiter ziehen", Math.min(dy, ZIEH_MIN) * 0.9);
+  }, { passive: true });
+  const ende = async () => {
+    if (y0 == null) return; const genug = dy >= ZIEH_MIN; y0 = null;
+    if (!genug) { zurueck(); return; }
+    zeigen("Wird aktualisiert …", ZIEH_MIN * 0.9);
+    try { await aktualisieren(); } finally { zurueck(); }
+  };
+  addEventListener("touchend", ende); addEventListener("touchcancel", () => { y0 = null; zurueck(); });
+}
+
 /* ---------- Start ---------- */
 // Ist die Google-Anmeldung abgelaufen, still neu anmelden (höchstens alle 10 Minuten, damit es keine Schleife gibt)
 function stillAnmelden() {
@@ -1796,7 +1838,8 @@ function stillAnmelden() {
   }
   if (DATA) fzBerechnen(false);
   vorlagenPruefen().then(vorlagenAusOrdner).then(() => { if (TAB === "set") render(); return vorlagenNachDrive(); }).catch(e => console.warn(e));
-  setInterval(() => { if (document.visibilityState === "visible") abgleichen(); }, 5 * 60e3);
+  setInterval(() => { if (document.visibilityState === "visible") abgleichen(); }, 60e3); // bei offener App jede Minute (Wunsch 2026-10-19, vorher 5 Min.)
+  ziehenEinrichten();
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { if (!stillAnmelden()) abgleichen(); } });
   addEventListener("online", () => { statusZeigen(); abgleichen(); if (DATA) fzBerechnen(false); });
   addEventListener("offline", statusZeigen);
