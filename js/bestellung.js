@@ -31,8 +31,8 @@ export const FORMULARE = {
       { k: "koepfchen", l: "Köpfchen (cm) *", x: 467, m: "decimal" },
       { k: "band", l: "Gardinenband Artikel-Nr.", x: 512 },
       { k: "zugabe", l: "Zugabe 1:", x: 577, m: "decimal" },
-      { k: "saumd", l: "Saum doppelt (cm) *", x: 616, m: "decimal" },
-      { k: "saume", l: "Saum einfach (cm) *", x: 652, m: "decimal" },
+      { k: "saumd", l: "Saumabschluss doppelt (cm) *", x: 616, m: "decimal" },
+      { k: "saume", l: "Saumabschluss einfach (cm) *", x: 652, m: "decimal" },
       { k: "anm", l: "Anmerkungen (z. B. Schnittmaß, Rapport)", x: 738, breit: 1 },
     ],
     gruppen: [
@@ -50,7 +50,7 @@ export const FORMULARE = {
         { k: "nicht_rapport", l: "nicht rapportgerechte Verarbeitung", typ: "haken", p: [374, 149] }] },
       zusatz([190, 171, 154, 135]),
     ],
-    fussnote: "* Ohne Angabe: Köpfchenhöhe 0,5 cm und Saum in Standardhöhe.",
+    fussnote: "* Ohne Angabe: Köpfchenhöhe 0,5 cm und Saumabschluss in Standardhöhe.",
   },
   flaechenvorhang: {
     titel: "Flächenvorhang", zeilen: [369, 346, 323, 300, 277, 255],

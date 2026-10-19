@@ -1290,7 +1290,7 @@ async function vorlageErkennen(bytes) {
   if (b[0] === 0x50 && b[1] === 0x4b) return BF.erkennen(XLSX, bytes) ? "beanstandung" : null;
   return B.erkennen(await pdfLib(), bytes);
 }
-const VORLAGE_KEY = art => "vorlage:" + art, VORLAGEN_DRIVE_KEY = "tourenplaner-vorlagen-drive", ENTWURF_KEY = "tourenplaner-bestellentwurf";
+const VORLAGE_KEY = art => "vorlage:" + art, ENTWURF_KEY = "tourenplaner-bestellentwurf";
 let VORLAGEN = {};       // art -> true, wenn die Vorlage auf diesem Gerät liegt
 let BEST = null;         // zuletzt erstelltes Formular { id, art, w, pdf, name }
 let SIG = null, VORLAGE_FUER = null; // Unterschriftsfeld; { id, art }, wenn beim Öffnen die Vorlage fehlte
@@ -1307,33 +1307,61 @@ function pdfLib() { // pdf-lib erst laden, wenn ein Formular gebraucht wird (die
   });
 }
 async function vorlagenPruefen() { for (const a of VORLAGE_ARTEN) VORLAGEN[a] = !!(await Sp.dateiLesen(VORLAGE_KEY(a))); }
-const vorlagenInDrive = () => { try { return JSON.parse(localStorage.getItem(VORLAGEN_DRIVE_KEY) || "[]"); } catch (e) { return []; } };
-async function vorlageNachDrive(art, bytes) {
-  const i = await G.dateiInfo(VORLAGE_DRIVE(art)); await G.dateiSpeichern(VORLAGE_DRIVE(art), bytes, VORL[art].typ, i && i.id);
-  try { localStorage.setItem(VORLAGEN_DRIVE_KEY, JSON.stringify([...new Set(vorlagenInDrive().concat(art))])); } catch (e) { /* egal */ }
+// Austausch einer Vorlage (z. B. neue Fassung vom Lieferanten): Google Drive ist der gemeinsame Stand aller Geräte.
+// stand: art -> Änderungszeit der Drive-Datei, die auf diesem Gerät liegt; offen: hier gewählt, noch nicht in Drive;
+// ordner: art -> Kennung der Datei, die zuletzt aus dem Ordner „Vorlagen“ übernommen wurde
+const lsLesen = (k, leer) => { try { return JSON.parse(localStorage.getItem(k) || "null") || leer; } catch (e) { return leer; } };
+const lsSetzen = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* egal */ } };
+const VSTAND_KEY = "tourenplaner-vorlagen-stand", VOFFEN_KEY = "tourenplaner-vorlagen-offen", VORDNER_KEY = "tourenplaner-vorlagen-ordner";
+const vorlageOffen = (art, ja) => lsSetzen(VOFFEN_KEY, [...new Set(lsLesen(VOFFEN_KEY, []).filter(a => a !== art).concat(ja ? [art] : []))]);
+const vorlageStand = (art, zeit) => lsSetzen(VSTAND_KEY, { ...lsLesen(VSTAND_KEY, {}), [art]: zeit });
+function kennung(bytes) { // Größe + Prüfsumme, um eine geänderte Datei zu erkennen
+  const b = new Uint8Array(bytes); let h = 2166136261;
+  for (let i = 0; i < b.length; i++) h = Math.imul(h ^ b[i], 16777619);
+  return b.length + "-" + (h >>> 0).toString(16);
 }
-// Vorlagen, die ohne Google-Verbindung ausgewählt wurden, nachträglich in Google Drive ablegen
+async function vorlageNachDrive(art, bytes) {
+  const i = await G.dateiInfo(VORLAGE_DRIVE(art)), r = await G.dateiSpeichern(VORLAGE_DRIVE(art), bytes, VORL[art].typ, i && i.id);
+  vorlageStand(art, r && r.modifiedTime); vorlageOffen(art, false);
+}
+// Vorlagen, die ohne Google-Verbindung gewählt wurden, nachträglich in Google Drive ablegen
 async function vorlagenNachDrive() {
   if (!driveBereit()) return;
-  for (const a of VORLAGE_ARTEN) if (VORLAGEN[a] && !vorlagenInDrive().includes(a)) await vorlageNachDrive(a, await Sp.dateiLesen(VORLAGE_KEY(a))).catch(e => console.warn(e));
+  for (const a of lsLesen(VOFFEN_KEY, [])) if (VORLAGEN[a]) await vorlageNachDrive(a, await Sp.dateiLesen(VORLAGE_KEY(a))).catch(e => console.warn(e));
 }
-// Am Rechner: fehlende Vorlagen aus dem Ordner „Vorlagen“ im Tourenplaner-Ordner übernehmen
+// Am Rechner: Vorlagen aus dem Ordner „Vorlagen“ im Tourenplaner-Ordner übernehmen – fehlende und ausgetauschte
+// (eine Datei im Ordner, die sich seit der letzten Übernahme geändert hat, ersetzt die Vorlage und geht nach Drive)
 async function vorlagenAusOrdner() {
-  if (!ORDNER || VORLAGE_ARTEN.every(a => VORLAGEN[a])) return;
+  if (!ORDNER) return;
   const namen = await Sp.vorlagenImOrdner(); if (!namen.length) return;
+  const gemerkt = lsLesen(VORDNER_KEY, {}), neu = [];
   for (const n of namen) {
     const bytes = await Sp.vorlageAusOrdner(n), art = await vorlageErkennen(bytes);
-    if (!art || VORLAGEN[art]) continue;
-    await Sp.dateiAblegen(VORLAGE_KEY(art), bytes); VORLAGEN[art] = true;
+    if (!art) continue;
+    const k = kennung(bytes); if (gemerkt[art] === k) continue;
+    const alt = await Sp.dateiLesen(VORLAGE_KEY(art));
+    if (!alt || kennung(alt) !== k) {
+      await Sp.dateiAblegen(VORLAGE_KEY(art), bytes); vorlageOffen(art, true);
+      if (VORLAGEN[art]) neu.push(VORL[art].titel);
+      VORLAGEN[art] = true;
+    }
+    gemerkt[art] = k;
   }
+  lsSetzen(VORDNER_KEY, gemerkt);
+  if (neu.length) toast("Neue Vorlage übernommen: " + neu.join(", "));
 }
-// Vorlage vom Gerät, sonst aus Google Drive (z. B. auf dem iPhone, wenn sie am Rechner ausgewählt wurde)
+// Vorlage vom Gerät; mit Google-Verbindung wird geprüft, ob in Google Drive eine neuere Fassung liegt
+// (z. B. auf dem iPhone, wenn sie am Rechner ausgewählt oder ausgetauscht wurde)
 async function vorlageHolen(art) {
   if (!VORLAGEN[art]) await vorlagenAusOrdner().catch(e => console.warn(e));
-  const b = await Sp.dateiLesen(VORLAGE_KEY(art)); if (b) return b;
-  if (!driveBereit()) return null;
-  const i = await G.dateiInfo(VORLAGE_DRIVE(art)).catch(() => null); if (!i) return null;
-  const d = await G.dateiLaden(i.id); await Sp.dateiAblegen(VORLAGE_KEY(art), d); VORLAGEN[art] = true; return d;
+  const b = await Sp.dateiLesen(VORLAGE_KEY(art));
+  if (!driveBereit()) return b;
+  if (lsLesen(VOFFEN_KEY, []).includes(art)) { if (b) await vorlageNachDrive(art, b).catch(e => console.warn(e)); return b; }
+  const i = await G.dateiInfo(VORLAGE_DRIVE(art)).catch(() => null);
+  if (!i || (b && i.modifiedTime === lsLesen(VSTAND_KEY, {})[art])) return b;
+  try {
+    const d = await G.dateiLaden(i.id); await Sp.dateiAblegen(VORLAGE_KEY(art), d); vorlageStand(art, i.modifiedTime); VORLAGEN[art] = true; return d;
+  } catch (e) { console.warn(e); return b; }
 }
 // Ausgewählte Dateien als Vorlagen übernehmen; welches Formular es ist, erkennt die App an den Feldern
 async function vorlagenEinlesen(dateien) {
@@ -1341,7 +1369,7 @@ async function vorlagenEinlesen(dateien) {
   for (const f of dateien) {
     const bytes = await f.arrayBuffer(), art = await vorlageErkennen(bytes);
     if (!art) { falsch.push(f.name); continue; }
-    await Sp.dateiAblegen(VORLAGE_KEY(art), bytes); VORLAGEN[art] = true; gut.push(VORL[art].titel);
+    await Sp.dateiAblegen(VORLAGE_KEY(art), bytes); vorlageOffen(art, true); VORLAGEN[art] = true; gut.push(VORL[art].titel);
     if (driveBereit()) vorlageNachDrive(art, bytes).catch(e => console.warn(e));
   }
   toast((gut.length ? "Vorlage übernommen: " + gut.join(", ") : "Keine Vorlage übernommen") + (falsch.length ? ". Nicht erkannt: " + falsch.join(", ") : ""));
