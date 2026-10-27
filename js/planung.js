@@ -11,7 +11,8 @@ export function setzeBelegt(ids) { BELEGT = new Set(ids || []); }
 const gesperrt = id => SPAETER.has(id) || BELEGT.has(id);
 let byIdMap = new Map();
 
-export function setzeEinstellungen(e) { S = { ...DEFAULTS, ...(e || {}) }; setzeStart(S); }
+let FIX_TAG = new Map(); // Tag nur mit festen Terminen (siehe nurFeste)
+export function setzeEinstellungen(e) { S = { ...DEFAULTS, ...(e || {}) }; setzeStart(S); FIX_TAG = new Map(); }
 // Startpunkt aus den Einstellungen: genaue Koordinaten, sonst Mitte der PLZ aus der Startadresse
 export function setzeStart(s) {
   const k = String(s.startKoord || "").split(",").map(Number);
@@ -27,7 +28,7 @@ export const km = (a, b) => luftlinie(a, b) * S.roadFactor;
 // Fahrt von a nach b: { km, min }. Später liefert hier OpenRouteService echte Werte;
 // fehlt ein Wert, wird geschätzt.
 let fahrtQuelle = null;
-export function setzeFahrtQuelle(fn) { fahrtQuelle = fn; }
+export function setzeFahrtQuelle(fn) { fahrtQuelle = fn; FIX_TAG = new Map(); }
 export function fahrt(a, b) {
   const echt = fahrtQuelle && fahrtQuelle(a, b);
   if (echt) return echt;
@@ -60,6 +61,7 @@ function umsatzTrend(c) {
   c.trend = alt > 0 ? (hoch - alt) / alt : neu > 0 ? Infinity : null;
 }
 export function rebuild(kunden) {
+  FIX_TAG = new Map();
   const list = []; TREND = trendGrundlage(kunden);
   for (const k of kunden) {
     if (k.inactive) continue;
@@ -103,19 +105,25 @@ export const byId = id => byIdMap.get(id) || PRIVAT.get(id);
 // Alternative in Frage und haben keinen „Letzten Besuch“.
 let PRIVAT = new Map();
 export const istPrivat = id => String(id).startsWith("P:");
+// „Vorher zu Hause sein“ (Wunsch 2026-10-27, z. B. Training, zu dem man von zu Hause aus fährt): Stichwort aus den Einstellungen im Betreff.
+// Die Tour endet dann zu Hause, spätestens heimVorlauf Minuten vor dem Termin; danach keine Besuche mehr an dem Tag.
+export const heimStichwoerter = () => String(S.heimWoerter || "").split(/[,;]/).map(w => w.trim().toLowerCase()).filter(Boolean);
+export const istHeimTermin = betreff => { const t = String(betreff || "").toLowerCase(); return heimStichwoerter().some(w => t.includes(w)); };
 export function privatPunkt(id, f) {
   const p = PLZ[f.plz];
-  const c = { id, privat: true, n1: f.betreff || "Persönlicher Termin", str: f.str || "", plz: f.plz || "", ort: f.ort || "",
+  const c = { id, privat: true, extern: !!f.extern, ohneOrt: !p, heim: istHeimTermin(f.betreff), zeit: f.time, endeZeit: f.ende, n1: f.betreff || "Persönlicher Termin", str: f.str || "", plz: f.plz || "", ort: f.ort || "",
     lat: p ? p[0] : null, lng: p ? p[1] : null, vm: Math.max(5, tmin(f.ende) - tmin(f.time)) || S.visitMin, ohp: parseOH(""),
     notes: [], ums: {}, extra: {}, uPlan: 0, urg: 0, gapOk: true };
   c.dHome = c.lat != null && startBekannt() ? fahrt(HOME, c).km : null;
   return c;
 }
 export function setzePrivat(termine) {
-  PRIVAT = new Map();
-  for (const [id, f] of Object.entries(termine || {})) if (istPrivat(id)) { const c = privatPunkt(id, f); if (c.lat != null) PRIVAT.set(id, c); }
+  PRIVAT = new Map(); FIX_TAG = new Map();
+  for (const [id, f] of Object.entries(termine || {})) if (istPrivat(id)) PRIVAT.set(id, privatPunkt(id, f)); // ohne Ort (aus dem Google Kalender): Zeit beim vorigen Besuch freihalten
 }
 export const privatListe = () => [...PRIVAT.values()];
+// Punkte mit Lage (Termine ohne Ort haben keine – sie zählen bei Entfernungen nicht mit)
+export const mitOrt = c => !!c && c.lat != null;
 /* ---------- Pausen (Wunsch 2026-10-23) ---------- */
 // Statt eines vorgeschlagenen Kunden eine Pause: Kennung "PAUSE:<Minuten>:<Nr>" in der Besuchsliste. Die Pause findet beim
 // vorigen Besuch statt (keine Fahrt), hat keine feste Uhrzeit und wandert mit dem Tag. Sie zählt nicht als Besuch.
@@ -150,11 +158,21 @@ export const el = c => c.gapOk && (MERKMAL() ? hatMerkmal(c) : LAENGST() || c.uP
 function hoursFor(c, day) { const v = c.ohp.days[day]; if (v === null) { return day >= 5 ? "closed" : [[8 * 60, 18 * 60]]; } return v; }
 export function openOn(c, day) { return hoursFor(c, day) !== "closed"; }
 export function simulate(start, startMin, ids, day, end) {
-  let t = startMin, pos = start, kmSum = 0; const legs = []; let ok = true, lateFix = false, spaet = false;
+  let t = startMin, pos = start, kmSum = 0; const legs = []; let ok = true, lateFix = false, spaet = false, heimDa = null;
   for (const id of ids) {
+    if (heimDa) ok = false; // nach „vorher zu Hause sein“ ist der Arbeitstag zu Ende
     if (istPause(id)) { const m = pauseMin(id); legs.push({ id, pause: true, km: 0, min: 0, geschaetzt: false, arr: t, begin: t, leave: t + m, dur: m, warn: "", fixed: false, verz: 0 }); t += m; continue; }
     const c = byId(id); if (!c) { continue; }
-    const f = fahrt(pos, c); kmSum += f.km; t += f.min;
+    if (c.heim && end) {
+      // Tour endet zu Hause, spätestens heimVorlauf Minuten vor dem Termin (die Fahrt zum Termin gehört nicht mehr zur Tour)
+      const f = fahrt(pos, HOME); kmSum += f.km; t += f.min;
+      const spaetestens = tmin(FIX[id] ? FIX[id].time : c.zeit) - (+S.heimVorlauf || 0); let warn = "";
+      if (t > spaetestens + 10) { lateFix = true; warn = "Zu Hause erst ca. " + hhmm(t) + " (spätestens " + hhmm(spaetestens) + ")"; }
+      else if (t > spaetestens) { spaet = true; warn = "Knapp: zu Hause ca. " + hhmm(t) + " (spätestens " + hhmm(spaetestens) + ")"; }
+      legs.push({ id, heim: true, km: f.km, min: f.min, geschaetzt: !!f.geschaetzt, arr: t, begin: t, leave: t, dur: 0, warn, fixed: true, verz: Math.max(0, t - spaetestens), spaetestens });
+      pos = HOME; heimDa = c; continue;
+    }
+    const f = c.ohneOrt ? { km: 0, min: 0 } : fahrt(pos, c); kmSum += f.km; t += f.min;
     const dur = dauer(c); const hs = hoursFor(c, day); let begin = null, warn = "";
     const fx = FIX[id] && FIX[id].day === day ? tmin(FIX[id].time) : null;
     if (fx != null && !legs.some(L => !L.pause) && t > fx) { const sh = Math.min(t - fx, Math.max(0, startMin - tmin("05:30"))); startMin -= sh; t -= sh; }
@@ -173,7 +191,8 @@ export function simulate(start, startMin, ids, day, end) {
       else if (begin - t > 45) warn = "Wartezeit " + Math.round(begin - t) + " Min. bis Öffnung";
     }
     if (!legs.some(L => !L.pause) && begin > t && ok) { const sh = begin - t; startMin += sh; warn = /^(Wartezeit|Puffer)/.test(warn) ? "" : warn; }
-    legs.push({ id, km: f.km, min: f.min, geschaetzt: !!f.geschaetzt, arr: t, begin, leave: begin + dur, dur, warn, fixed: fx != null, verz: fx != null ? Math.max(0, t - fx) : 0 }); t = begin + dur; pos = c;
+    if (heimDa) warn = "Nach „" + heimDa.n1 + "“ keine Besuche mehr" + (warn ? " · " + warn : "");
+    legs.push({ id, km: f.km, min: f.min, geschaetzt: !!f.geschaetzt, arr: t, begin, leave: begin + dur, dur, warn, fixed: fx != null, verz: fx != null ? Math.max(0, t - fx) : 0 }); t = begin + dur; if (!c.ohneOrt) pos = c;
   }
   let back = 0, backMin = 0; if (end) { const f = fahrt(pos, end); back = f.km; backMin = f.min; kmSum += back; t += backMin; }
   const wait = legs.reduce((a, l) => a + Math.max(0, l.begin - l.arr), 0) - (legs[0] ? Math.max(0, legs[0].begin - legs[0].arr) : 0);
@@ -239,12 +258,12 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag = 0, frei
   /* Übernachtungstour (nur wenn eine Nacht gewählt ist) */
   if (uebernachtung !== "keine") {
     const [o1, o2] = uebernachtung.split("-").map(Number);
-    const ovFix = days[o1].stops.concat(days[o2].stops).map(byId);
+    const ovFix = days[o1].stops.concat(days[o2].stops).map(byId).filter(mitOrt);
     if (ovFix.length && ovFix.some(c => c.dHome > S.overnightKm * 0.7)) {
       days[o1].type = "ov1"; days[o2].type = "ov2";
       const cands = pool().filter(c => nearSeeds(ovFix, 75)(c) && c.dHome > S.overnightKm * 0.6 && el(c)).sort((a, b) => b.urg / (1 + distTo(ovFix, b) / 30) - a.urg / (1 + distTo(ovFix, a) / 30));
       for (const c of cands) { if (anzahlBesuche(days[o1].stops) >= S.maxVisits) break; if (!openOn(c, o1)) continue; const r = insertBest(days[o1], c.id); if (r) { days[o1].stops = r; used.add(c.id); } }
-      const hp = days[o1].stops.length ? byId(days[o1].stops[days[o1].stops.length - 1]) : byId(days[o2].stops[0]);
+      const o1Ort = days[o1].stops.map(byId).filter(mitOrt), hp = o1Ort.length ? o1Ort[o1Ort.length - 1] : days[o2].stops.map(byId).filter(mitOrt)[0];
       days[o1].hotel = days[o2].hotel = hotelOrt(hp);
       for (const c of cands) { if (used.has(c.id)) continue; if (anzahlBesuche(days[o2].stops) >= S.maxVisits) break; if (!openOn(c, o2)) continue; const r = insertBest(days[o2], c.id); if (r) { days[o2].stops = r; used.add(c.id); } }
     }
@@ -283,7 +302,7 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag = 0, frei
     if (D.type !== "tour") continue;
     const cands = pool().filter(c => c.dHome <= S.overnightKm && openOn(c, D.day));
     if (D.stops.length) {
-      const sd = D.stops.map(byId);
+      const sd = D.stops.map(byId).filter(mitOrt);
       const near = cands.filter(c => nearSeeds(sd, 45)(c) && el(c)).sort((a, b) => b.urg / (1 + distTo(sd, b) / 20) - a.urg / (1 + distTo(sd, a) / 20));
       for (const c of near) { if (anzahlBesuche(D.stops) >= S.maxVisits) break; const r = insertBest(D, c.id); if (r) { D.stops = r; used.add(c.id); } }
       continue;
@@ -344,7 +363,7 @@ function feinschliffOhnePausen(D, maxSchritte) {
     }
     for (let i = 0; i < frei.length; i++) {
       if (benutzt[i]) continue; const c = byId(frei[i]); if (!c) continue;
-      benutzt[i] = true; seq.push(frei[i]); rec(c, fahr + fahrt(pos, c).min, besuche + dauer(c)); seq.pop(); benutzt[i] = false;
+      benutzt[i] = true; seq.push(frei[i]); rec(c.ohneOrt ? pos : c.heim ? HOME : c, fahr + (c.ohneOrt ? 0 : fahrt(pos, c.heim ? HOME : c).min), besuche + (c.heim ? 0 : dauer(c))); seq.pop(); benutzt[i] = false;
     }
   };
   rec(e.start, 0, 0);
@@ -354,7 +373,7 @@ function feinschliffOhnePausen(D, maxSchritte) {
 // Umweg (km), wenn Kunde c in die Strecke des Tages eingefügt wird – zwischen zwei Punkten der Strecke
 // (Start, Besuche, Rückfahrt nach Hause). Bei Übernachtung Tag 1 nur vor dem letzten Besuch (dort ist das Hotel).
 function umweg(D, c) {
-  const e = dayEnds(D), pts = [e.start, ...D.stops.map(byId).filter(Boolean)]; if (e.end) pts.push(e.end);
+  const e = dayEnds(D), pts = [e.start, ...D.stops.map(byId).filter(mitOrt)]; if (e.end) pts.push(e.end);
   let best = Infinity; const k = (a, b) => fahrt(a, b).km; // echte Straßen-km, soweit berechnet (sonst Schätzung)
   for (let i = 0; i < pts.length - 1; i++) best = Math.min(best, k(pts[i], c) + k(c, pts[i + 1]) - k(pts[i], pts[i + 1]));
   return best;
@@ -365,7 +384,7 @@ const UMWEG_MAX = 20, NAH_KM = 15;
 function auffuellen(D, frei, genommen) {
   const ov1Ende = D.type === "ov1" ? D.stops[D.stops.length - 1] : null; // Hotel bleibt beim letzten Besuch von Tag 1
   while (anzahlBesuche(D.stops) < S.maxVisits) {
-    const st = D.stops.map(byId).filter(Boolean);
+    const st = D.stops.map(byId).filter(mitOrt);
     // An Übernachtungstagen nur Kunden in der Ferne – Kunden nahe Bremen bleiben für Tagestouren
     const fern = D.type === "tour" ? (() => true) : (c => c.dHome > S.overnightKm * 0.5);
     const kand = CUST.filter(c => frei(c) && !D.stops.includes(c.id) && el(c) && openOn(c, D.day) && fern(c))
@@ -399,7 +418,7 @@ export function tauschPruefung(plan, nurTag) {
     const fern = D.type === "tour" ? (() => true) : (c => c.dHome > S.overnightKm * 0.5); // wie beim Auffüllen
     const raus = new Set(); // an diesem Tag schon herausgetauscht – kommt nicht wieder herein
     for (let runde = 0; runde < S.maxVisits && anzahlBesuche(D.stops) >= S.maxVisits; runde++) {
-      const st = D.stops.map(byId).filter(Boolean);
+      const st = D.stops.map(byId).filter(mitOrt);
       const hotelId = D.type === "ov1" ? D.stops[D.stops.length - 1] : null;
       const weg = st.filter(c => !(FIX[c.id] && FIX[c.id].day === D.day) && c.id !== hotelId).sort((a, b) => a.urg - b.urg);
       if (!weg.length) break;
@@ -439,22 +458,37 @@ export function dayEnds(D) {
 // Ausnahme „Termin mit Wunschzeit“: an diesem Tag darf die Rückkehr später sein (z. B. 18:30 Uhr)
 export function wunschBis(D) { return Math.max(0, ...D.stops.filter(id => FIX[id] && FIX[id].day === D.day && FIX[id].bis).map(id => tmin(FIX[id].bis))); }
 export function setFix(fixed, mondayISO) {
+  FIX_TAG = new Map();
   FIX = {}; SPAETER = new Set(); const mon = parseISO(mondayISO);
   for (const id in (fixed || {})) { const f = fixed[id]; const di = Math.round((parseISO(f.date) - mon) / 864e5); if (di >= 0 && di <= 3) FIX[id] = { day: di, time: f.time, bis: f.bis || null }; else if (di > 3) SPAETER.add(id); }
 }
 export const istFix = (id, day) => !!(FIX[id] && FIX[id].day === day);
 const hasFix = D => D.stops.some(id => FIX[id] && FIX[id].day === D.day);
+// Der Tag nur mit seinen festen Terminen (zwischengespeichert, wird bei neuen Terminen/Einstellungen/Kunden geleert)
+function nurFeste(D, seq, e) {
+  const fx = seq.filter(id => FIX[id] && FIX[id].day === D.day).sort((a, b) => tmin(FIX[a].time) - tmin(FIX[b].time));
+  if (!fx.length) return null;
+  const key = [D.type, D.day, e.sMin, e.start && e.start.lat, e.start && e.start.lng, fx.join(",")].join("|");
+  if (!FIX_TAG.has(key)) FIX_TAG.set(key, simulate(e.start, e.sMin, fx, D.day, e.end));
+  return FIX_TAG.get(key);
+}
 function feasible(D, seq) {
   const e = dayEnds(D); const s = simulate(e.start, e.sMin, seq, D.day, e.end); if (!s.ok) return null;
+  const fest = nurFeste(D, seq, e);
   if (s.lateFix || s.spaet) {
     // Ein fester Termin wird zu spät erreicht: nur in Ordnung, wenn das sowieso nicht zu schaffen ist
     // (gleiche Verspätung wie ohne die übrigen Besuche) – der Tag wird dann trotzdem aufgefüllt
-    const fx = seq.filter(id => FIX[id] && FIX[id].day === D.day).sort((a, b) => tmin(FIX[a].time) - tmin(FIX[b].time));
-    const grenze = Object.fromEntries(simulate(e.start, e.sMin, fx, D.day, e.end).legs.map(L => [L.id, L.verz]));
+    const grenze = Object.fromEntries((fest ? fest.legs : []).map(L => [L.id, L.verz]));
     if (s.legs.some(L => L.fixed && L.verz > (grenze[L.id] || 0) + 1)) return null;
   }
-  if (D.type === "ov1") return s.legs.length && s.legs[s.legs.length - 1].begin > tmin(S.lastVisitDay1) ? null : s;
-  return s.end <= e.limit ? s : null;
+  // Erzwingen die festen Termine schon eine spätere Rückkehr (bzw. Tag 1: einen späteren letzten Besuch), blockiert das
+  // den Tag nicht (Wunsch 2026-10-27, Anlass: zwischen 11 und 15 Uhr wurde nichts geplant): aufgefüllt wird trotzdem,
+  // die Rückkehr darf dadurch nur nicht noch später werden
+  if (D.type === "ov1") {
+    const letzter = x => x && x.legs.length ? x.legs[x.legs.length - 1].begin : 0;
+    return s.legs.length && letzter(s) > Math.max(tmin(S.lastVisitDay1), letzter(fest)) ? null : s;
+  }
+  return s.end <= Math.max(e.limit, fest ? fest.end : 0) ? s : null;
 }
 function insertBest(D, id, force, bisPos = D.stops.length) {
   let best = null, bv = 1e9, fb = null, fv = 1e9; const e = dayEnds(D);
@@ -488,7 +522,7 @@ function planeTagUmOhnePausen(plan, di) {
   const anderswo = new Set(plan.days.filter((X, i) => i !== di).flatMap(X => X.stops)), ex = new Set(plan.excluded || []);
   const frei = c => !c.out && c.lat != null && !c.planHold && !gesperrt(c.id) && !ex.has(c.id) && !anderswo.has(c.id) && !D.stops.includes(c.id) && openOn(c, D.day) && el(c);
   // Kunden in der Nähe der Termine (auch wenn der Termin weit draußen liegt – ob der Tag passt, prüft insertBest)
-  const sd = D.stops.map(byId).filter(Boolean), dist = c => Math.min(...sd.map(x => km(x, c)));
+  const sd = D.stops.map(byId).filter(mitOrt), dist = c => Math.min(...sd.map(x => km(x, c)));
   const near = CUST.filter(c => frei(c) && dist(c) <= 45).sort((a, b) => b.urg / (1 + dist(b) / 20) - a.urg / (1 + dist(a) / 20));
   for (const c of near) { if (anzahlBesuche(D.stops) >= S.maxVisits) break; const r = insertBest(D, c.id); if (r) D.stops = r; }
   // Auffüllen: in der Nähe oder mit kleinem Umweg auf der Strecke (auch auf dem Heimweg)
@@ -496,7 +530,7 @@ function planeTagUmOhnePausen(plan, di) {
   feinschliff(D); // schnellste Reihenfolge (bei Tag 1 bleibt der letzte Besuch = Hotelort)
   // Übernachtung Tag 1: Hotel im Ort des letzten Besuchs
   if (D.type === "ov1") {
-    D.hotel = hotelOrt(byId(D.stops[D.stops.length - 1]));
+    const mitLage = D.stops.map(byId).filter(mitOrt); if (mitLage.length) D.hotel = hotelOrt(mitLage[mitLage.length - 1]);
     const D2 = plan.days.find(X => X.type === "ov2"); if (D2) D2.hotel = D.hotel;
   }
   return { raus: vorher.filter(id => !D.stops.includes(id)), neu: D.stops.length };
@@ -525,7 +559,7 @@ function ersatzKandidaten(plan, D, extraAus, weit) {
 }
 // Nach dem Entfernen eines Kunden: passenden Ersatz in den Tag einfügen.
 export function findReplacement(plan, D, removed) {
-  const anchors = D.stops.map(byId).filter(Boolean); if (!anchors.length && removed) anchors.push(removed);
+  const anchors = D.stops.map(byId).filter(mitOrt); if (!anchors.length && removed) anchors.push(removed);
   if (!anchors.length) return null;
   const dist = c => Math.min(...anchors.map(a => km(a, c)));
   const cands = ersatzKandidaten(plan, D).filter(c => dist(c) <= 40).sort((a, b) => b.urg / (1 + dist(b) / 20) - a.urg / (1 + dist(a) / 20));

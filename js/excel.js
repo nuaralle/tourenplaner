@@ -127,8 +127,9 @@ export function leseStand(XLSX, daten) {
     const d = datum(z.Datum), t = uhrzeit(z.von), e = uhrzeit(z.bis);
     if (!d || !t || !e) continue;
     let id = txt(z.Kennung); if (!id.startsWith("P:") || privat[id]) id = "P:" + Date.now().toString(36) + Object.keys(privat).length;
-    privat[id] = { date: d, time: t, ende: e, betreff: txt(z.Betreff), str: txt(z["Straße"]), plz: txt(z.PLZ).replace(/\D/g, "").padStart(5, "0"), ort: txt(z.Ort) };
+    privat[id] = { date: d, time: t, ende: e, betreff: txt(z.Betreff), str: txt(z["Straße"]), plz: (p => p ? p.padStart(5, "0") : "")(txt(z.PLZ).replace(/\D/g, "")), ort: txt(z.Ort) };
     if (txt(z["Kalender-Eintrag"])) { privat[id].ev = txt(z["Kalender-Eintrag"]); privat[id].cal = "ok"; }
+    if (txt(z.Quelle) === "Google Kalender") { privat[id].extern = true; privat[id].gs = txt(z["Google-Stand"]); } // aus dem Google Kalender übernommen
   }
   // Wochenplan: eine oder mehrere Wochen untereinander; angezeigt wird die aktuelle bzw. nächste Woche
   const plaene = wb.Sheets["Wochenplan"] ? leseWochenplaene(XLSX.utils.sheet_to_json(wb.Sheets["Wochenplan"], { defval: "" }), kunden, privat) : [];
@@ -140,16 +141,19 @@ export function leseStand(XLSX, daten) {
     const id = txt(z["Kd Nr."]), d = datum(z.Datum), t = uhrzeit(z.Uhrzeit);
     if (!id || !d || !t || !kunden.some(k => k.id === id)) continue;
     termine[id] = { date: d, time: t }; if (uhrzeit(z["Tag bis"])) termine[id].bis = uhrzeit(z["Tag bis"]); if (txt(z["Kalender-Eintrag"])) { termine[id].ev = txt(z["Kalender-Eintrag"]); termine[id].cal = "ok"; }
+    if (txt(z.Quelle) === "Google Kalender") { termine[id].extern = true; termine[id].gs = txt(z["Google-Stand"]); }
   }
   Object.assign(termine, privat);
   for (const p of plaene) { for (const id in p.fixed) if (!termine[id]) termine[id] = p.fixed[id]; p.fixed = termine; }
-  let kalLoeschen = [], spaltenArten = {}, sicherung = "", neukundenAus = [];
+  let kalLoeschen = [], spaltenArten = {}, sicherung = "", neukundenAus = [], kalAus = [], kalGanztag = [];
   if (wb.Sheets["Intern"]) for (const z of XLSX.utils.sheet_to_json(wb.Sheets["Intern"], { defval: "" })) {
     if (z["Schlüssel"] === "sicherung") sicherung = datum(z.Wert);
     if (z["Schlüssel"] === "kalLoeschen") try { kalLoeschen = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "abgeschlossen") try { const tage = new Set(JSON.parse(z.Wert) || []); plaene.forEach(p => p.days.forEach(D => { if (tage.has(D.date)) D.abgeschlossen = true; })); } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "meinHotel") try { const h = JSON.parse(z.Wert) || {}; plaene.forEach(p => { const x = h[p.week]; if (x && x.name && x.ort) p.meinHotel = { ort: String(x.ort), name: String(x.name) }; }); } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "beendet") try { const tage = new Set(JSON.parse(z.Wert) || []); plaene.forEach(p => p.days.forEach(D => { if (tage.has(D.date)) D.beendet = true; })); } catch (e) { /* egal */ }
+    if (z["Schlüssel"] === "kalAus") try { kalAus = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
+    if (z["Schlüssel"] === "kalGanztag") try { kalGanztag = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "neukundenAus") try { neukundenAus = JSON.parse(z.Wert) || []; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "spaltenArten") try { spaltenArten = JSON.parse(z.Wert) || {}; } catch (e) { /* egal */ }
     if (z["Schlüssel"] === "uebernachtung") { // je Woche { "JJJJ-MM-TT": "auto" | "0-1" … } (ältere Stände: ein Wert für alle)
@@ -157,7 +161,7 @@ export function leseStand(XLSX, daten) {
       for (const p of plaene) { const v = typeof w === "object" && w ? w[p.week] : w; if (/^(auto|keine|0-1|1-2|2-3)$/.test(String(v))) p.uebernachtung = String(v); }
     }
   }
-  return { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten, sicherung, neukundenAus };
+  return { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten, sicherung, neukundenAus, kalAus, kalGanztag };
 }
 
 // Zeilen nach Wochen (Montag) aufteilen
@@ -188,7 +192,7 @@ function leseWoche(zeilen, kunden, mon, privat = {}) {
   if (t1) {
     const t2 = days.find(D => D.type === "ov2");
     const ort = hotelAusExcel[t1.day] || (t2 && hotelAusExcel[t2.day]) || "";
-    const cand = t1.stops.map(id => kd.get(id)).filter(Boolean).reverse();
+    const cand = t1.stops.map(id => kd.get(id)).filter(k => k && k.plz).reverse();
     const h = cand.find(k => k.ort === ort) || cand[0] || (t2 && kd.get(t2.stops[0]));
     if (h) { const p = PLZ[h.plz] || [null, null];
       const ho = hotelOrt({ ort: h.ort, plz: h.plz, lat: p[0], lng: p[1] }); // Insel -> Hotel auf dem Festland
@@ -198,7 +202,7 @@ function leseWoche(zeilen, kunden, mon, privat = {}) {
 }
 
 /* ---------- Schreiben ---------- */
-export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten, sicherung, neukundenAus }) {
+export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, spalten, termine, spaltenArten, sicherung, neukundenAus, kalAus, kalGanztag }) {
   termine = termine || (plan && plan.fixed) || {};
   const wochen = (plaene && plaene.length ? plaene : plan ? [plan] : []).slice().sort((a, b) => a.week.localeCompare(b.week));
   const wb = XLSX.utils.book_new();
@@ -250,15 +254,17 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(wp, { header: ["Datum", "Art", "Reihenfolge", "Kd Nr.", "Kunde", "Fixtermin", "Hotel", "Kalender-Eintrag"] }), "Wochenplan");
   const kdN = new Map(kunden.map(k => [k.id, k]));
   const tr = Object.entries(termine).filter(([id]) => !id.startsWith("P:")).sort((a, b) => (a[1].date + a[1].time).localeCompare(b[1].date + b[1].time))
-    .map(([id, f]) => { const k = kdN.get(id) || {}; return { "Datum": f.date, "Uhrzeit": f.time, "Kd Nr.": id, "Kunde": (k.n1 || "?") + " (" + (k.ort || "") + ")", "Kalender-Eintrag": f.ev || "", "Tag bis": f.bis || "" }; });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr, { header: ["Datum", "Uhrzeit", "Kd Nr.", "Kunde", "Kalender-Eintrag", "Tag bis"] }), "Termine");
+    .map(([id, f]) => { const k = kdN.get(id) || {}; return { "Datum": f.date, "Uhrzeit": f.time, "Kd Nr.": id, "Kunde": (k.n1 || "?") + " (" + (k.ort || "") + ")", "Kalender-Eintrag": f.ev || "", "Tag bis": f.bis || "", "Quelle": f.extern ? "Google Kalender" : "", "Google-Stand": f.extern ? f.gs || "" : "" }; });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr, { header: ["Datum", "Uhrzeit", "Kd Nr.", "Kunde", "Kalender-Eintrag", "Tag bis", "Quelle", "Google-Stand"] }), "Termine");
   const pt = Object.entries(termine).filter(([id]) => id.startsWith("P:")).sort((a, b) => (a[1].date + a[1].time).localeCompare(b[1].date + b[1].time))
-    .map(([id, f]) => ({ "Datum": f.date, "von": f.time, "bis": f.ende, "Betreff": f.betreff || "", "Straße": f.str || "", "PLZ": f.plz || "", "Ort": f.ort || "", "Kalender-Eintrag": f.ev || "", "Kennung": id }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pt, { header: ["Datum", "von", "bis", "Betreff", "Straße", "PLZ", "Ort", "Kalender-Eintrag", "Kennung"] }), PRIVAT_BLATT);
+    .map(([id, f]) => ({ "Datum": f.date, "von": f.time, "bis": f.ende, "Betreff": f.betreff || "", "Straße": f.str || "", "PLZ": f.plz || "", "Ort": f.ort || "", "Kalender-Eintrag": f.ev || "", "Kennung": id, "Quelle": f.extern ? "Google Kalender" : "", "Google-Stand": f.extern ? f.gs || "" : "" }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pt, { header: ["Datum", "von", "bis", "Betreff", "Straße", "PLZ", "Ort", "Kalender-Eintrag", "Kennung", "Quelle", "Google-Stand"] }), PRIVAT_BLATT);
   // Internes Blatt: noch zu löschende Kalendertermine (z. B. wenn ein Termin offline gelöst wurde)
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ "Schlüssel": "kalLoeschen", "Wert": JSON.stringify(kalLoeschen || []) }, { "Schlüssel": "uebernachtung", "Wert": JSON.stringify(Object.fromEntries(wochen.map(p => [p.week, p.uebernachtung || "auto"]))) }, { "Schlüssel": "spaltenArten", "Wert": JSON.stringify(spaltenArten || {}) },
     { "Schlüssel": "sicherung", "Wert": sicherung || "" },
     { "Schlüssel": "neukundenAus", "Wert": JSON.stringify(neukundenAus || []) },
+    { "Schlüssel": "kalAus", "Wert": JSON.stringify(kalAus || []) },
+    { "Schlüssel": "kalGanztag", "Wert": JSON.stringify(kalGanztag || []) },
     { "Schlüssel": "abgeschlossen", "Wert": JSON.stringify(wochen.flatMap(p => p.days.filter(D => D.abgeschlossen).map(D => D.date))) },
     { "Schlüssel": "meinHotel", "Wert": JSON.stringify(Object.fromEntries(wochen.filter(p => p.meinHotel).map(p => [p.week, p.meinHotel]))) },
     { "Schlüssel": "beendet", "Wert": JSON.stringify(wochen.flatMap(p => p.days.filter(D => D.beendet).map(D => D.date))) }], { header: ["Schlüssel", "Wert"] }), "Intern");

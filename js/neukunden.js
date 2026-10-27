@@ -103,6 +103,8 @@ const grund = s => String(s || "").toLowerCase().replace(/[äöüßéè]/g, c =>
 // Rechtsformen und Füllwörter zählen nicht, Branchenwörter nur, wenn sonst nichts übrig bleibt
 const RECHT = new Set("gmbh mbh co kg gbr ohg ug ag ek e k inh inhaber inhaberin und the der die das am an im in fuer von vom zum zur haftungsbeschraenkt partner".split(" "));
 const BRANCHE_WORT = /^(raumausstatt|raumausstattung|raumausstatter|raumausstatterei|raumausstattungen|polster|polsterei|polsterer|polsterwerkstatt|polstermoebel|sattler|sattlerei|gardinen|gardine|gardinenstudio|deko|dekoration|dekorationen|sonnenschutz|innenarchitektur|innenarchitekt|innenarchitektin|interior|design|wohnen|wohnideen|wohnkultur|einrichtung|einrichtungen|einrichtungshaus|moebel|moebelhaus|raum|raumdesign|werkstatt|studio|meisterbetrieb|fachgeschaeft|handwerk|haus)$/;
+// alle Wörter eines Textes (klein, ohne Umlaute) – z. B. für einen Kalender-Titel
+export const textWoerter = s => grund(s).split(/[^a-z0-9]+/).filter(Boolean);
 export function nameWoerter(s) {
   const w = grund(s).split(/[^a-z0-9]+/).filter(x => x.length >= 2 && !RECHT.has(x));
   const eigen = w.filter(x => !BRANCHE_WORT.test(x) && x.length >= 3);

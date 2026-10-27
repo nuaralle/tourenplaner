@@ -137,6 +137,18 @@ export async function terminEintragen(body, evId) {
   const r = await api(`${KAL}?sendUpdates=none`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   return (await r.json()).id;
 }
+// Termine eines Zeitraums nur lesen (für die Übernahme in den Tourenplaner, Wunsch 2026-10-27). von/bis: "JJJJ-MM-TT", bis einschließlich
+export async function termineLesen(von, bis) {
+  const L = []; let token = "";
+  do {
+    const p = new URLSearchParams({ timeMin: new Date(von + "T00:00:00").toISOString(), timeMax: new Date(bis + "T23:59:59").toISOString(), singleEvents: "true", orderBy: "startTime", maxResults: "250",
+      fields: "items(id,status,summary,location,description,start,end,attendees(self,responseStatus)),nextPageToken" });
+    if (token) p.set("pageToken", token);
+    const j = await (await api(`${KAL}?${p}`)).json();
+    L.push(...(j.items || [])); token = j.nextPageToken || "";
+  } while (token && L.length < 2000);
+  return L;
+}
 export async function terminLoeschen(evId) {
   await api(`${KAL}/${encodeURIComponent(evId)}?sendUpdates=none`, { method: "DELETE" }, [404, 410]);
 }
