@@ -414,7 +414,7 @@ function tagAbschliessen(week, di) {
 }
 // „Tag beenden“ (Wunsch 2026-10-19, wenn es keine Termine gibt): danach plant die App an diesem Tag nichts mehr dazu.
 // Es bleiben feste Termine, persönliche Termine und schon erfasste Besuche; die übrigen Kunden sind wieder frei für spätere Planungen.
-const bleibtBeimBeenden = (D, id) => P.istPrivat(id) || (TERMINE()[id] && TERMINE()[id].date === D.date) || besucht(id, D.date);
+const bleibtBeimBeenden = (D, id) => P.istPrivat(id) || P.istPause(id) || (TERMINE()[id] && TERMINE()[id].date === D.date) || besucht(id, D.date);
 function tagBeenden(week, di) {
   const p = planVon(week), D = p && p.days[di]; if (!D) return;
   const raus = D.stops.filter(id => !bleibtBeimBeenden(D, id));
@@ -462,7 +462,7 @@ function renderPlan() {
     return `<section class="empty"><h2>Noch keine Woche geplant</h2><p>Der Planer sucht fällige Kunden heraus, bündelt sie zu Tagestouren und plant eine Übernachtungstour für Gebiete über ${S().overnightKm} km. Freitag bleibt Home-Office.</p>
     ${wocheAbFeld(ws)}${nachtWahl("", startVon(ws).tag)}<div class="plankn"><button class="pri" data-a="plan">Woche planen</button><button data-a="pneu">+ Persönlicher Termin</button></div></section>`; }
   const alt = P.alternativen(PL);
-  const legs = PL.days.filter(D => D.type !== "home").flatMap(D => P.simDay(D).legs);
+  const legs = PL.days.filter(D => D.type !== "home").flatMap(D => P.simDay(D).legs.filter(L => !L.pause));
   const nGesch = legs.filter(L => L.geschaetzt).length;
   const fzText = !legs.length ? "" : nGesch === 0 ? `Echte Fahrzeiten (OpenRouteService${+S().zuschlag ? ", +" + S().zuschlag + " % Zuschlag" : ""})`
     : nGesch === legs.length ? "Entfernungen und Fahrzeiten sind noch Schätzungen" : "Fahrzeiten teilweise geschätzt (≈)";
@@ -485,13 +485,16 @@ function renderPlan() {
     const nFix = D.stops.filter(id => P.istFix(id, D.day)).length;
     const label = (D.type === "ov1" ? "Übernachtungstour · Tag 1" : D.type === "ov2" ? "Übernachtungstour · Tag 2" : "Tagestour") + (D.beendet ? " · beendet" : "");
     const istHeute = D.date === today();
-    const nBes = P.anzahlBesuche(D.stops), nPriv = D.stops.length - nBes;
-    const tagSumme = D.stops.length ? `<span class="tagsum">${nBes} ${nBes === 1 ? "Besuch" : "Besuche"}${nPriv ? " + " + nPriv + " pers. Termin" : ""} · ${D.type === "ov1" ? "Ende ca. " + hhmm(sim.end) + (D.hotel ? (meinHotel(PL, D) ? " · Hotel: " + esc(meinHotel(PL, D)) : " · Hotel in " + esc(D.hotel.ort)) : "") : "zurück ca. " + hhmm(sim.end)}</span>` : "";
+    const nBes = P.anzahlBesuche(D.stops), nPriv = D.stops.filter(P.istPrivat).length, nPause = D.stops.filter(P.istPause).length;
+    const tagSumme = D.stops.length ? `<span class="tagsum">${nBes} ${nBes === 1 ? "Besuch" : "Besuche"}${nPriv ? " + " + nPriv + " pers. Termin" : ""}${nPause ? " + " + nPause + " Pause" + (nPause > 1 ? "n" : "") : ""} · ${D.type === "ov1" ? "Ende ca. " + hhmm(sim.end) + (D.hotel ? (meinHotel(PL, D) ? " · Hotel: " + esc(meinHotel(PL, D)) : " · Hotel in " + esc(D.hotel.ort)) : "") : "zurück ca. " + hhmm(sim.end)}</span>` : "";
     html += `<article class="day ${D.type}${istHeute ? " heute" : ""}" id="tag-${D.date}" style="--dc:var(--d${di})"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span>${istHeute ? `<span class="heutemk">Heute</span>` : ""}<span class="kind">${label}</span>${tagSumme}</header>`;
     if (!D.stops.length) { html += D.beendet ? `<p class="muted">Tag beendet – keine weiteren Besuche.</p><div class="row">${tagOeffnenKnopf(PL.week, di)}</div>${pneuKnopf(D.date)}</article>` : `<p class="muted">Keine passenden Kunden gefunden.</p>${pneuKnopf(D.date)}</article>`; return; }
     const startName = D.type === "ov2" ? (meinHotel(PL, D) ? esc(meinHotel(PL, D)) : "Hotel in " + esc(D.hotel.ort)) : "Bremen";
     html += `<ol class="stops"><li class="node">${hhmm(sim.depart)} Abfahrt ${startName}</li>`;
-    sim.legs.forEach((L, i) => { const nr = i + 1;
+    let nrZ = 0;
+    sim.legs.forEach(L => {
+      if (L.pause) { html += pauseZeile(L, di, D); return; }
+      const nr = ++nrZ;
       const c = byId(L.id);
       if (c.privat) { html += privatZeile(L, c, nr, nGesch < legs.length); return; }
       const done = c.lv && c.lv >= D.date;
@@ -500,7 +503,7 @@ function renderPlan() {
        <li class="stop${done ? " done" : ""}${L.fixed ? " isfix" : ""}"><div class="t"><span class="nr" style="background:var(--dc)">${nr}</span>${hhmm(L.begin)}${L.fixed ? `<span class="fixb">${TERMINE()[c.id]?.bis ? "Wunschzeit" : "fix"}</span>` : ""}</div><div class="who"><button class="link" data-a="open" data-id="${c.id}">${esc(c.n1)}</button> ${abcTag(c)}${merkmalSchilder(c)}
        <div class="sub">${esc(c.ort)} · ${L.dur} Min. · Umsatz ${S().umsatzJahr}: ${eur(c.uPlan)}${trendKurz(c)} · ${c.since == null ? "noch nie besucht" : "zuletzt vor " + Math.round(c.since / 7) + " Wo."}${c.gapOk ? "" : " · Mindestabstand noch nicht erreicht"}</div>
        <div class="kontakt">${navLink(c, ICON.navi + "Navi", "pill")}${c.tel ? telKnopf(c.tel, "Anrufen") : ""}${c.mob ? telKnopf(c.mob, "Mobil", ICON.mobil) : ""}</div>${L.warn ? `<div class="warn">${esc(L.warn)}</div>` : ""}${L.fixed ? kalHinweis(c.id) : ""}</div>
-       <div class="acts">${done ? `<span class="ok">besucht</span>` : D.abgeschlossen ? `<span class="warn">nicht angetroffen</span>` : `${L.fixed ? `<button data-a="unfix" data-d="${di}" data-id="${c.id}">Fix lösen</button>` : `<button data-a="fix" data-d="${di}" data-id="${c.id}" data-time="${hhmm(L.begin)}">Termin fix</button><button data-a="wunsch" data-d="${di}" data-id="${c.id}">Wunsch&shy;zeit</button>`}<button data-a="visit" data-id="${c.id}">Besuch erfassen</button>`}<button data-a="rm" data-d="${di}" data-id="${c.id}" aria-label="${esc(c.n1)} aus der Tour nehmen">Entfernen</button></div>
+       <div class="acts">${done ? `<span class="ok">besucht</span>` : D.abgeschlossen ? `<span class="warn">nicht angetroffen</span>` : `${L.fixed ? `<button data-a="unfix" data-d="${di}" data-id="${c.id}">Fix lösen</button>` : `<button data-a="fix" data-d="${di}" data-id="${c.id}" data-time="${hhmm(L.begin)}">Termin fix</button><button data-a="wunsch" data-d="${di}" data-id="${c.id}">Wunsch&shy;zeit</button><button data-a="pause" data-d="${di}" data-id="${c.id}">Pause</button>`}<button data-a="visit" data-id="${c.id}">Besuch erfassen</button>`}<button data-a="rm" data-d="${di}" data-id="${c.id}" aria-label="${esc(c.n1)} aus der Tour nehmen">Entfernen</button></div>
        ${done ? "" : alts.length ? alternativenHTML(di, c, alts) : `<div class="alt">Keine Alternative in der Nähe gefunden</div>`}</li>`;
     });
     if (D.type === "ov1") {
@@ -525,6 +528,31 @@ function homeTermine(datum, titel = "Ausnahme – Termin am Home-Office-Tag:") {
 // Betreff, Adresse (Straße mit Hausnummer, PLZ, Ort – Pflicht) und Zeit von–bis. Der Tag wird um den Termin herum geplant
 // wie bei einem festen Kundentermin; der Termin zählt nicht als Besuch und kommt (ohne Einladung) in den Google Kalender.
 const pneuKnopf = datum => datum >= today() ? `<button class="ghost" data-a="pneu" data-datum="${datum}">+ Persönlicher Termin</button>` : "";
+// Pause statt eines Kunden (Wunsch 2026-10-23): beim vorigen Besuch, ohne feste Uhrzeit
+function pauseZeile(L, di, D) {
+  return `<li class="stop pause"><div class="t">${hhmm(L.begin)}<span class="fixb pauseb">Pause</span></div><div class="who"><b>Pause ${L.dur} Min.</b>
+   <div class="sub">${hhmm(L.begin)}–${hhmm(L.leave)} Uhr · beim vorigen Besuch</div></div>
+   ${D.abgeschlossen ? "" : `<div class="acts"><button data-a="pause" data-d="${di}" data-id="${L.id}">Dauer ändern</button><button data-a="pauseweg" data-d="${di}" data-id="${L.id}">Entfernen</button></div>`}</li>`;
+}
+// Pause entfernen: der ersetzte Kunde kommt an ihre Stelle zurück (sonst ein passender Kunde in der Nähe), damit keine Lücke bleibt
+function pauseEntfernen(di, id) {
+  const PL = PLAN(), D = PL.days[di], i = D.stops.indexOf(id); if (i < 0) return;
+  const kd = P.pauseKunde(id), k = kd && byId(kd);
+  const frei = k && !k.out && !PL.days.some(X => X.stops.includes(kd)) && !belegtFuer(PL.week).includes(kd);
+  if (frei) { D.stops[i] = kd; PL.excluded = (PL.excluded || []).filter(x => x !== kd); geaendert(); toast("Pause entfernt – " + k.n1 + " ist wieder eingeplant"); return; }
+  D.stops.splice(i, 1); aufbereiten();
+  const rep = P.findReplacement(PL, D, null); if (rep) D.stops = rep.seq;
+  geaendert(); toast(rep ? "Pause entfernt – dafür " + rep.c.n1 + " (" + rep.c.ort + ")" : "Pause entfernt – kein passender Kunde in der Nähe gefunden");
+}
+function pauseDialog(di, id) {
+  const D = PLAN().days[di], c = byId(id), istP = P.istPause(id);
+  const jetzt = istP ? P.pauseMin(id) : P.dauer(c);
+  const wahl = [15, 30, 45, 60], vor = wahl.reduce((a, b) => Math.abs(b - jetzt) < Math.abs(a - jetzt) ? b : a);
+  dlg(`<header class="dh"><h3>${istP ? "Pause ändern" : "Pause statt " + esc(c.n1)}</h3><button value="x" class="ghost">Abbrechen</button></header>
+   <p>${WD[D.day]}, ${fmtD(D.date)}</p>
+   <p class="muted">${istP ? "Wie lang soll die Pause sein?" : "Der Kunde wird an dieser Stelle durch eine Pause ersetzt (beim vorigen Besuch, ohne Extrafahrt). Er kann später wieder eingeplant werden."}</p>
+   <div class="row pausewahl">${wahl.map(m => `<button value="setpause" class="${m === vor ? "pri" : ""}" data-d="${di}" data-id="${esc(id)}" data-min="${m}">${m} Min.</button>`).join("")}</div>`);
+}
 function privatZeile(L, c, nr, zeigeSchaetzung) {
   const f = TERMINE()[c.id];
   return `<li class="leg"><span class="drv">${L.geschaetzt && zeigeSchaetzung ? "≈ " : ""}${Math.round(L.km)} km · ${Math.round(L.min)} Min.</span></li>
@@ -636,7 +664,7 @@ function drawMap() {
   PL.days.forEach((D, di) => {
     if (!D.stops.length) return; const e = P.dayEnds(D); const seq = [e.start].concat(D.stops.map(byId).filter(Boolean)); if (e.end) seq.push(e.end);
     g += `<polyline points="${seq.map(p => Pt(p).map(v => v.toFixed(1)).join(",")).join(" ")}" class="route" style="stroke:var(--d${di})"/>`;
-    D.stops.forEach((id, i) => { const c = byId(id); if (!c) return; const [x, y] = Pt(c); g += `<circle cx="${x}" cy="${y}" r="6.5" class="stopdot" style="fill:var(--d${di})"/><text x="${x}" y="${y}" class="stopnr">${i + 1}</text>`; });
+let nrK = 0; D.stops.forEach(id => { const c = byId(id); if (!c) return; nrK++; const [x, y] = Pt(c); g += `<circle cx="${x}" cy="${y}" r="6.5" class="stopdot" style="fill:var(--d${di})"/><text x="${x}" y="${y}" class="stopnr">${nrK}</text>`; });
     if (D.type === "ov1" && D.hotel) { const [x, y] = Pt(D.hotel); g += `<rect x="${x - 5}" y="${y - 5}" width="10" height="10" class="hotelmk"/>`; }
     leg += `<span><i style="background:var(--d${di})"></i>${WDS[D.day]}</span>`;
   });
@@ -1296,6 +1324,12 @@ function dlgAktion(v, btn) {
     }
     return;
   }
+  if (v === "setpause") {
+    const D = PL.days[+btn.dataset.d], i = D.stops.indexOf(id), min = +btn.dataset.min; if (i < 0 || !min) return;
+    const name = P.istPause(id) ? "" : (byId(id) || {}).n1;
+    D.stops[i] = P.neuePause(min, P.istPause(id) ? P.pauseKunde(id) : id); geaendert();
+    toast(name ? "Pause " + min + " Min. statt " + name : "Pause jetzt " + min + " Min."); return;
+  }
   if (v === "savewunsch") {
     const di = +btn.dataset.d, D = PL.days[di], tm = $("#wzt").value;
     if (tm) {
@@ -1733,6 +1767,8 @@ document.addEventListener("click", async e => {
     if (a === "visit") visitDialog(b.dataset.id);
     if (a === "new") editDialog(null);
     if (a === "fix") fixDialog(+b.dataset.d, b.dataset.id, b.dataset.time);
+    if (a === "pause") pauseDialog(+b.dataset.d, b.dataset.id);
+    if (a === "pauseweg") pauseEntfernen(+b.dataset.d, b.dataset.id);
     if (a === "wunsch") wunschDialog(+b.dataset.d, b.dataset.id);
     if (a === "unfix") { fixWeg(b.dataset.id); geaendert(); toast("Termin wieder offen"); }
     if (a === "alt" || a === "altdavor" || a === "altdanach") {

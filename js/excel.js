@@ -177,7 +177,7 @@ function leseWoche(zeilen, kunden, mon, privat = {}) {
     const di = Math.round((parseISO(datum(z.Datum)) - mon) / 864e5); if (di < 0 || di > 4) continue;
     const D = days[di]; const art = ARTEN[txt(z.Art)]; if (art && di < 4) D.type = art;
     const id = txt(z["Kd Nr."]);
-    if (id && kd.has(id) && di < 4) {
+    if (id && (kd.has(id) || /^PAUSE:\d+:/.test(id)) && di < 4) { // Pausen stehen mit ihrer Kennung im Wochenplan
       D.stops.push(id);
       const t = uhrzeit(z.Fixtermin); if (t) { fixed[id] = { date: D.date, time: t }; if (txt(z["Kalender-Eintrag"])) { fixed[id].ev = txt(z["Kalender-Eintrag"]); fixed[id].cal = "ok"; } }
     }
@@ -188,7 +188,7 @@ function leseWoche(zeilen, kunden, mon, privat = {}) {
   if (t1) {
     const t2 = days.find(D => D.type === "ov2");
     const ort = hotelAusExcel[t1.day] || (t2 && hotelAusExcel[t2.day]) || "";
-    const cand = t1.stops.map(id => kd.get(id)).reverse();
+    const cand = t1.stops.map(id => kd.get(id)).filter(Boolean).reverse();
     const h = cand.find(k => k.ort === ort) || cand[0] || (t2 && kd.get(t2.stops[0]));
     if (h) { const p = PLZ[h.plz] || [null, null];
       const ho = hotelOrt({ ort: h.ort, plz: h.plz, lat: p[0], lng: p[1] }); // Insel -> Hotel auf dem Festland
@@ -240,7 +240,7 @@ export function schreibeStand(XLSX, { kunden, einst, plan, plaene, kalLoeschen, 
       const art = ARTEN_TEXT[D.type] || "Tagestour";
       if (!D.stops.length) { wp.push({ "Datum": D.date, "Art": art, "Reihenfolge": "", "Kd Nr.": "", "Kunde": "", "Fixtermin": "", "Hotel": D.type === "ov1" && D.hotel ? D.hotel.ort : "", "Kalender-Eintrag": "" }); continue; }
       D.stops.forEach((id, i) => {
-        const k = kd.get(id) || {};
+        const k = kd.get(id) || (/^PAUSE:\d+:/.test(id) ? { n1: "Pause " + id.split(":")[1] + " Min.", ort: "beim vorigen Besuch" } : {});
         const f = termine[id];
         wp.push({ "Datum": D.date, "Art": art, "Reihenfolge": i + 1, "Kd Nr.": id, "Kunde": (k.n1 || "?") + " (" + (k.ort || "") + ")",
           "Fixtermin": f && f.date === D.date ? f.time : "", "Hotel": D.type === "ov1" && D.hotel ? D.hotel.ort : "", "Kalender-Eintrag": f && f.date === D.date && f.ev ? f.ev : "" });

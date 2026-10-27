@@ -116,8 +116,33 @@ export function setzePrivat(termine) {
   for (const [id, f] of Object.entries(termine || {})) if (istPrivat(id)) { const c = privatPunkt(id, f); if (c.lat != null) PRIVAT.set(id, c); }
 }
 export const privatListe = () => [...PRIVAT.values()];
-// Anzahl Kundenbesuche eines Tages (ohne persönliche Termine)
-export const anzahlBesuche = stops => stops.filter(id => !istPrivat(id)).length;
+/* ---------- Pausen (Wunsch 2026-10-23) ---------- */
+// Statt eines vorgeschlagenen Kunden eine Pause: Kennung "PAUSE:<Minuten>:<Nr>" in der Besuchsliste. Die Pause findet beim
+// vorigen Besuch statt (keine Fahrt), hat keine feste Uhrzeit und wandert mit dem Tag. Sie zählt nicht als Besuch.
+export const istPause = id => /^PAUSE:\d+:/.test(String(id));
+export const pauseMin = id => +String(id).split(":")[1] || 30;
+// Die Kennung merkt sich den ersetzten Kunden ("PAUSE:<Min>:<Nr>:<Kd.-Nr.>"), damit er beim Entfernen der Pause zurückkommt
+export const neuePause = (min, kd) => "PAUSE:" + Math.round(min) + ":" + Date.now().toString(36) + (kd ? ":" + kd : "");
+export const pauseKunde = id => String(id).split(":").slice(3).join(":") || null;
+// Etwas mit dem Tag ohne seine Pausen machen (Reihenfolge, Einfügen …) und die Pausen danach wieder einsetzen:
+// jede hinter den Besuch, hinter dem sie vorher stand (gibt es den nicht mehr, an ihre alte Stelle)
+function pausenMerken(stops) {
+  const p = []; let vor = null;
+  stops.forEach((id, i) => { if (istPause(id)) p.push({ id, vor, i }); else vor = id; });
+  return p;
+}
+function pausenEinsetzen(stops, p) {
+  const seq = stops.filter(id => !istPause(id));
+  for (const x of p) { const j = x.vor == null ? 0 : seq.indexOf(x.vor) + 1; seq.splice(j > 0 || x.vor == null ? j : Math.min(x.i, seq.length), 0, x.id); }
+  return seq;
+}
+function ohnePausen(D, fn) {
+  const p = pausenMerken(D.stops); if (!p.length) return fn(D);
+  D.stops = D.stops.filter(id => !istPause(id));
+  try { return fn(D); } finally { D.stops = pausenEinsetzen(D.stops, p); }
+}
+// Anzahl Kundenbesuche eines Tages (ohne persönliche Termine und Pausen)
+export const anzahlBesuche = stops => stops.filter(id => !istPrivat(id) && !istPause(id)).length;
 // Kommt für die Planung in Frage: Mindestabstand eingehalten und – je nach Grundlage – Umsatz im gewählten Jahr bzw. Häkchen gesetzt
 export const el = c => c.gapOk && (MERKMAL() ? hatMerkmal(c) : LAENGST() || c.uPlan > 0);
 
@@ -127,11 +152,12 @@ export function openOn(c, day) { return hoursFor(c, day) !== "closed"; }
 export function simulate(start, startMin, ids, day, end) {
   let t = startMin, pos = start, kmSum = 0; const legs = []; let ok = true, lateFix = false, spaet = false;
   for (const id of ids) {
+    if (istPause(id)) { const m = pauseMin(id); legs.push({ id, pause: true, km: 0, min: 0, geschaetzt: false, arr: t, begin: t, leave: t + m, dur: m, warn: "", fixed: false, verz: 0 }); t += m; continue; }
     const c = byId(id); if (!c) { continue; }
     const f = fahrt(pos, c); kmSum += f.km; t += f.min;
     const dur = dauer(c); const hs = hoursFor(c, day); let begin = null, warn = "";
     const fx = FIX[id] && FIX[id].day === day ? tmin(FIX[id].time) : null;
-    if (fx != null && !legs.length && t > fx) { const sh = Math.min(t - fx, Math.max(0, startMin - tmin("05:30"))); startMin -= sh; t -= sh; }
+    if (fx != null && !legs.some(L => !L.pause) && t > fx) { const sh = Math.min(t - fx, Math.max(0, startMin - tmin("05:30"))); startMin -= sh; t -= sh; }
     if (fx != null) {
       begin = Math.max(t, fx);
       if (t > fx + 10) { lateFix = true; warn = "Fixtermin " + FIX[id].time + " wird nicht erreicht (Ankunft ca. " + hhmm(t) + ")"; }
@@ -139,14 +165,14 @@ export function simulate(start, startMin, ids, day, end) {
       else if (fx - t > 45) warn = "Puffer " + Math.round(fx - t) + " Min. bis zum Fixtermin";
     }
     else if (hs === "closed") { ok = false; warn = "An diesem Tag geschlossen"; begin = t; }
-    else if (!legs.length && start === HOME && +S.ersterMaxKm > 0 && f.km > +S.ersterMaxKm) { ok = false; begin = t; warn = "Erster Besuch " + Math.round(f.km) + " km von zu Hause (höchstens " + S.ersterMaxKm + " km)"; }
+    else if (!legs.some(L => !L.pause) && start === HOME && +S.ersterMaxKm > 0 && f.km > +S.ersterMaxKm) { ok = false; begin = t; warn = "Erster Besuch " + Math.round(f.km) + " km von zu Hause (höchstens " + S.ersterMaxKm + " km)"; }
     else if (hs === "appt") { begin = t; warn = "Nur nach Vereinbarung – vorher anrufen"; }
     else {
       for (const [a, b] of hs) { const s = Math.max(t, a); if (b - s >= Math.min(dur, 45)) { begin = s; break; } }
       if (begin === null) { ok = false; begin = t; warn = "Kommt außerhalb der Öffnungszeiten an"; }
       else if (begin - t > 45) warn = "Wartezeit " + Math.round(begin - t) + " Min. bis Öffnung";
     }
-    if (!legs.length && begin > t && ok) { const sh = begin - t; startMin += sh; warn = /^(Wartezeit|Puffer)/.test(warn) ? "" : warn; }
+    if (!legs.some(L => !L.pause) && begin > t && ok) { const sh = begin - t; startMin += sh; warn = /^(Wartezeit|Puffer)/.test(warn) ? "" : warn; }
     legs.push({ id, km: f.km, min: f.min, geschaetzt: !!f.geschaetzt, arr: t, begin, leave: begin + dur, dur, warn, fixed: fx != null, verz: fx != null ? Math.max(0, t - fx) : 0 }); t = begin + dur; pos = c;
   }
   let back = 0, backMin = 0; if (end) { const f = fahrt(pos, end); back = f.km; backMin = f.min; kmSum += back; t += backMin; }
@@ -287,7 +313,11 @@ function planWeekTage(mondayISO, excluded, fixed, uebernachtung, abTag = 0, frei
 // bei Übernachtung Tag 1 bleibt der letzte Besuch (Hotelort) der letzte.
 // maxSchritte: Notbremse für die Suche (die Tausch-Prüfung nimmt weniger, weil sie viele Varianten durchprobiert)
 export function feinschliff(D, maxSchritte = 400000) {
-  if (!D || D.type === "home" || D.stops.length < 3) return false;
+  if (!D || D.type === "home") return false;
+  return ohnePausen(D, () => feinschliffOhnePausen(D, maxSchritte));
+}
+function feinschliffOhnePausen(D, maxSchritte) {
+  if (D.stops.length < 3) return false;
   const n = D.stops.length;
   const e = dayEnds(D), jetzt = simulate(e.start, e.sMin, D.stops, D.day, e.end);
   const fahrMin = s => s.legs.reduce((a, L) => a + L.min, 0) + s.backMin;
@@ -435,7 +465,8 @@ function insertBest(D, id, force, bisPos = D.stops.length) {
   }
   return best || (force ? fb : null);
 }
-export function resequence(D) {
+export function resequence(D) { ohnePausen(D, resequenceOhnePausen); }
+function resequenceOhnePausen(D) {
   const fx = D.stops.filter(id => FIX[id] && FIX[id].day === D.day).sort((a, b) => tmin(FIX[a].time) - tmin(FIX[b].time));
   const rest = D.stops.filter(id => !fx.includes(id)); const tmp = { ...D, stops: fx };
   for (const id of rest) { tmp.stops = insertBest(tmp, id, true); }
@@ -445,8 +476,12 @@ export function resequence(D) {
 // Feste Termine bleiben, die übrigen Besuche werden durch passende Kunden in der Nähe der Termine ersetzt.
 // Ergebnis: { raus: Kunden, die vorher geplant waren und jetzt nicht mehr, neu: Anzahl Besuche danach }
 export function planeTagUm(plan, di) {
-  setFix(plan.fixed || {}, plan.week); setzeStichtag(plan.week);
   const D = plan.days[di]; if (!D || D.type === "home") return null;
+  return ohnePausen(D, () => planeTagUmOhnePausen(plan, di));
+}
+function planeTagUmOhnePausen(plan, di) {
+  setFix(plan.fixed || {}, plan.week); setzeStichtag(plan.week);
+  const D = plan.days[di];
   const vorher = D.stops.slice();
   D.stops = D.stops.filter(id => FIX[id] && FIX[id].day === D.day).sort((a, b) => tmin(FIX[a].time) - tmin(FIX[b].time));
   if (!D.stops.length) { D.stops = vorher; return null; }
@@ -467,6 +502,8 @@ export function planeTagUm(plan, di) {
   return { raus: vorher.filter(id => !D.stops.includes(id)), neu: D.stops.length };
 }
 export function tryInsert(D, id) {
+  const p = pausenMerken(D.stops);
+  if (p.length) { const r = tryInsert({ ...D, stops: D.stops.filter(x => !istPause(x)) }, id); if (!r) return null; const seq = pausenEinsetzen(r, p); return feasible(D, seq) ? seq : null; }
   if (hasFix(D)) return insertBest(D, id);
   const e = dayEnds(D); const seq = order(e.start, D.stops.concat(id), e.end || null, { sMin: e.sMin, day: D.day });
   const s = simulate(e.start, e.sMin, seq, D.day, e.end); if (!s.ok) return null;
