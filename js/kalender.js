@@ -85,13 +85,23 @@ export function uebernehmen(T, kal, liste, von, bis) {
   const aus = new Set(kal.aus || []), res = { neu: [], geaendert: [], weg: [], ganztagNeu: [], ganztagWeg: [] };
   const imFenster = d => d >= von && d <= bis;
   const extern = new Map(); // gid -> Kennung in T
-  for (const [id, f] of Object.entries(T)) if (f.extern && f.ev) extern.set(f.ev, id);
+  // Kennzeichen „extern“ kann fehlen (z. B. von einer älteren Programmfassung gespeichert, 2026-10-30):
+  // dann an der Kennung „P:G-…“ erkennen oder daran, dass die Termin-ID ein Google-Termin ist, den nicht der Tourenplaner eingetragen hat
+  const googleIds = new Set(liste.map(x => x.gid));
+  externMarkieren(T);
+  for (const [id, f] of Object.entries(T)) {
+    if (!f.ev) continue;
+    if (!f.extern && googleIds.has(f.ev)) { f.extern = true; f.cal = "ok"; }
+    if (f.extern) extern.set(f.ev, id);
+  }
   const gesehen = new Set();
   for (const x of liste) {
     if (x.art === "ganztag" || aus.has(x.gid) || !imFenster(x.date)) continue;
     gesehen.add(x.gid);
     const altId = extern.get(x.gid), alt = altId && T[altId];
     if (alt && alt.gs === x.gs) continue; // in Google unverändert (auch wenn im Tourenplaner verschoben)
+    // Stand fehlt (Kennzeichen war verloren), Termin aber gleich: nur merken, nichts neu planen
+    if (alt && !alt.gs && alt.date === x.date && alt.time === x.time && (x.art === "kunde" || alt.ende === x.ende)) { alt.gs = x.gs; continue; }
     let art = x.art;
     // Kunde hat schon einen anderen Termin (aus dem Tourenplaner oder einem anderen Google-Termin):
     // derselbe Termin doppelt eingetragen → nichts tun; sonst die Zeit als persönlicher Termin freihalten
@@ -119,5 +129,9 @@ export function uebernehmen(T, kal, liste, von, bis) {
   res.ganztagNeu = [...tageJ].filter(d => !tageV.has(d)); res.ganztagWeg = [...tageV].filter(d => !tageJ.has(d));
   kal.ganztag = (kal.ganztag || []).filter(g => !imFenster(g.date)).concat(jetzt);
   return res;
+}
+// Persönliche Termine aus Google haben die Kennung „P:G-…“: Kennzeichen „extern“ sicherstellen (dort nie ändern/löschen)
+export function externMarkieren(T) {
+  for (const [id, f] of Object.entries(T || {})) if (String(id).startsWith(PRIVAT_PREFIX) && !f.extern) { f.extern = true; f.cal = "ok"; }
 }
 export const ganztagAm = (kal, datum) => (kal && kal.ganztag || []).filter(g => g.date === datum);

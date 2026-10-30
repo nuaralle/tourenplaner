@@ -103,7 +103,7 @@ function statusZeigen() {
   el.textContent = t; el.className = "sync" + (warn ? " dirty" : "");
   if (gb) gb.hidden = !knopf;
 }
-function aufbereiten() { P.setzeEinstellungen(DATA.einst); fzAnschliessen(); P.rebuild(DATA.kunden); const T = TERMINE(); P.setzePrivat(T); if (PLAN()) P.setFix(T, PLAN().week); P.setzeBelegt(PLAN() ? belegtFuer(PLAN().week) : []); }
+function aufbereiten() { P.setzeEinstellungen(DATA.einst); fzAnschliessen(); P.rebuild(DATA.kunden); const T = TERMINE(); K.externMarkieren(T); P.setzePrivat(T); if (PLAN()) P.setFix(T, PLAN().week); P.setzeBelegt(PLAN() ? belegtFuer(PLAN().week) : []); }
 
 /* ---------- Fahrzeiten (OpenRouteService) ---------- */
 const FZ_KEY = "tourenplaner-fahrzeiten", FZ_DRIVE_KEY = "tourenplaner-fahrzeiten-drive";

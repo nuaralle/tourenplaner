@@ -111,7 +111,7 @@ export const heimStichwoerter = () => String(S.heimWoerter || "").split(/[,;]/).
 export const istHeimTermin = betreff => { const t = String(betreff || "").toLowerCase(); return heimStichwoerter().some(w => t.includes(w)); };
 export function privatPunkt(id, f) {
   const p = PLZ[f.plz];
-  const c = { id, privat: true, extern: !!f.extern, ohneOrt: !p, heim: istHeimTermin(f.betreff), zeit: f.time, endeZeit: f.ende, n1: f.betreff || "Persönlicher Termin", str: f.str || "", plz: f.plz || "", ort: f.ort || "",
+  const c = { id, privat: true, extern: !!f.extern, ohneOrt: !p, heim: istHeimTermin(f.betreff) && !(p && startBekannt() && luftlinie({ lat: p[0], lng: p[1] }, HOME) < 3), zeit: f.time, // Termin zu Hause (Wunsch 2026-10-30): normaler Termin, Tag geht davor und danach weiter endeZeit: f.ende, n1: f.betreff || "Persönlicher Termin", str: f.str || "", plz: f.plz || "", ort: f.ort || "",
     lat: p ? p[0] : null, lng: p ? p[1] : null, vm: Math.max(5, tmin(f.ende) - tmin(f.time)) || S.visitMin, ohp: parseOH(""),
     notes: [], ums: {}, extra: {}, uPlan: 0, urg: 0, gapOk: true };
   c.dHome = c.lat != null && startBekannt() ? fahrt(HOME, c).km : null;
