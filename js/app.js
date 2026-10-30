@@ -111,7 +111,7 @@ function fzLadenLokal() { try { const s = localStorage.getItem(FZ_KEY); if (s) F
 function fzSpeichernLokal() { try { localStorage.setItem(FZ_KEY, F.alsText(FZ)); } catch (e) { /* zu groß o. ä. – dann nur im Speicher */ } }
 function fzAnschliessen() { P.setzeFahrtQuelle(FZ.punkte.length ? F.fahrtQuelle(FZ, +S().zuschlag || 0) : null); }
 // Alle Orte, für die Fahrzeiten gebraucht werden: Startadresse + Lage aller aktiven Kunden (PLZ-Mittelpunkte)
-function benoetigtePunkte() { if (!P.startBekannt()) return []; return [F.punktKey(HOME)].concat(P.CUST.filter(c => c.lat != null && !c.out).map(F.punktKey), P.privatListe().map(F.punktKey)); }
+function benoetigtePunkte() { if (!P.startBekannt()) return []; return [F.punktKey(HOME)].concat(P.CUST.filter(c => c.lat != null && !c.out).map(F.punktKey), P.privatListe().filter(P.mitOrt).map(F.punktKey)); } // Termine ohne Ort haben keine Lage
 async function fzBerechnen(manuell) {
   if (!DATA || FZ_LAEUFT) return;
   const key = (DATA.einst.orsKey || "").trim();
@@ -297,12 +297,17 @@ function geaendert() { persist(); aufbereiten(); render(); }
 function render() {
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.t === TAB ? "page" : "false"));
   const m = $("#main");
-  if (!DATA) { m.innerHTML = renderStart(); return; }
-  aufbereiten();
-  if (TAB === "plan") { m.innerHTML = renderPlan(); drawMap(); }
-  else if (TAB === "kunden") m.innerHTML = renderList();
-  else if (TAB === "auswertung") m.innerHTML = renderAuswertung();
-  else m.innerHTML = renderSettings();
+  // ohne Stand: Willkommensseite (bei Kunden/Auswertung/Einstellungen mit Hinweis, statt nichts zu tun)
+  if (!DATA) { m.innerHTML = (TAB !== "plan" ? `<p class="warn">Auf diesem Gerät ist noch kein Stand geladen – bitte zuerst mit Google verbinden oder den Excel-Stand laden. Danach sind Kunden, Auswertung und Einstellungen da.</p>` : "") + renderStart(); return; }
+  try {
+    aufbereiten();
+    if (TAB === "plan") { m.innerHTML = renderPlan(); drawMap(); }
+    else if (TAB === "kunden") m.innerHTML = renderList();
+    else if (TAB === "auswertung") m.innerHTML = renderAuswertung();
+    else m.innerHTML = renderSettings();
+  } catch (e) { // Anzeigefehler sichtbar machen (sonst passiert beim Antippen scheinbar nichts)
+    console.error(e); m.innerHTML = `<p class="warn">Diese Seite konnte nicht angezeigt werden (${esc(e.message)}). Bitte Claude Bescheid geben.</p>`;
+  }
 }
 function renderStart() {
   return `<section class="start"><h2>Willkommen</h2>
