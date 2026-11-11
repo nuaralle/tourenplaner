@@ -297,6 +297,8 @@ function geaendert() { persist(); aufbereiten(); render(); }
 function render() {
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.t === TAB ? "page" : "false"));
   const m = $("#main");
+  // Höhe der Kopfzeile für die mitlaufende Tagesleiste auf dem Handy (Optik 2026-11-11)
+  const kopf = $(".top"); if (kopf) document.documentElement.style.setProperty("--kopfH", kopf.offsetHeight + "px");
   // ohne Stand: Willkommensseite (bei Kunden/Auswertung/Einstellungen mit Hinweis, statt nichts zu tun)
   if (!DATA) { m.innerHTML = (TAB !== "plan" ? `<p class="warn">Auf diesem Gerät ist noch kein Stand geladen – bitte zuerst mit Google verbinden oder den Excel-Stand laden. Danach sind Kunden, Auswertung und Einstellungen da.</p>` : "") + renderStart(); return; }
   try {
@@ -521,6 +523,14 @@ function alternativenHTML(di, c, alts) {
     <div class="altin"><span class="altt">Ankreuzen, dann wählen:</span>${zeilen}
     <span class="altk">${knopf("alt", "Statt Kunde")}${knopf("altdavor", "Zusätzlich davor")}${knopf("altdanach", "Zusätzlich danach")}</span></div></details>`;
 }
+// Tagesleiste (Optik 2026-11-11, nur Handy): läuft unter der Kopfzeile mit, ein Tipp springt zum Tag; heute ist markiert
+function tagLeiste(PL) {
+  return `<nav class="tagleiste" aria-label="Zum Tag springen">${PL.days.map(D => {
+    const n = D.type === "home" || D.type === "frei" ? 0 : P.anzahlBesuche(D.stops), heute = D.date === today();
+    return `<button data-a="zutag" data-datum="${D.date}" class="${heute ? "heute" : ""}${n ? "" : " leer"}"${heute ? ` aria-current="date"` : ""}><b>${WDS[D.day]} ${+D.date.slice(8)}.</b><small>${n ? n + (n === 1 ? " Besuch" : " Besuche") : D.type === "home" ? "Büro" : "frei"}</small></button>`; }).join("")}</nav>`;
+}
+// zu einem Tag der angezeigten Woche springen (unter Kopfzeile und Tagesleiste, siehe scroll-margin-top in style.css)
+function zumTagSpringen(datum) { const el = document.getElementById("tag-" + datum); if (el) el.scrollIntoView({ block: "start" }); return !!el; }
 function renderPlan() {
   const PL = PLAN();
   if (!P.startBekannt()) return `<section class="empty"><h2>Startadresse fehlt</h2><p>Bitte unter <b>Einstellungen › Tagesablauf</b> Ihre Startadresse (zu Hause) mit PLZ eintragen.</p></section>`;
@@ -537,12 +547,12 @@ function renderPlan() {
   // Woche ab einem späteren Tag (Wunsch 2026-10-17): erster nicht freier Tag; die Nacht-Knöpfe sind immer sichtbar
   const s0 = Math.max(0, PL.days.findIndex(D => D.type !== "frei")), startFeld = planStart(PL);
   const titel = s0 > 0 ? `KW ${kw(PL.week)} · ab ${WD[s0]}, ${fmtD(PL.days[s0].date)}` : `KW ${kw(PL.week)} · Woche ab ${fmtD(PL.week)}`;
-  let html = `${wochenReiter()}<div class="planhead"><div><h2>${titel}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}${+S().ersterMaxKm > 0 ? " · erster Besuch höchstens " + S().ersterMaxKm + " km" : ""}</p></div>
+  let html = `${wochenReiter()}${tagLeiste(PL)}<div class="planhead"><div><h2>${titel}</h2><p class="muted">Tourvorschlag · ${fzText}${P.LV_NUTZEN() ? "" : " · ohne „Letzter Besuch“ (Einstellungen)"}${+S().ersterMaxKm > 0 ? " · erster Besuch höchstens " + S().ersterMaxKm + " km" : ""}</p></div>
    <div class="planknoepfe">${heuteDa ? `<button class="pri heuteknopf" data-a="heute">${ICON.heute}Heute</button>` : ""}<button class="pneukopf" data-a="pneu">+ Persönlicher Termin</button>
    ${nachtWahl(PL.uebernachtung, startVon(startFeld).tag, ovErledigtText(PL))}
    <details class="planen" data-auf="planen" ${offenAttr("planen", !handy())}><summary>${ICON.pfeil}Planung ändern</summary>
    ${wocheAbFeld(startFeld)}<div class="plankn"><button class="pri" data-a="plan">Neu planen</button>${PL.week >= ab() && kommende().length < MAX_WOCHEN && !planVon(iso(addDays(parseISO(PL.week), 7))) ? `<button data-a="plannext">Nächste Woche planen</button>` : ""}<button data-a="wloeschen">Woche löschen</button></div></details></div></div>
-   ${offeneHinweis()}<section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze der Woche"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section><div class="days">`;
+   ${offeneHinweis()}<details class="uebersicht" data-auf="uebersicht" ${handy() ? offenAttr("uebersicht", false) : "open"}><summary>${ICON.pfeil}Wochenübersicht und Karte</summary><section class="overview"><figure class="map"><svg id="map" role="img" aria-label="Tourskizze der Woche"></svg><figcaption id="legend"></figcaption></figure>${weekSummary()}</section></details><div class="days">`;
   PL.days.forEach((D, di) => {
     const date = fmtD(D.date);
     if (D.type === "home") { html += `<article class="day home" id="tag-${D.date}"><header><h3>${WD[D.day]}</h3><span class="muted">${date}</span></header><p>Home-Office. Zeit für Angebote, Muster und die Ausschreibungsrecherche.</p>${homeTermine(D.date)}${openTasksHTML()}</article>`; return; }
@@ -1851,7 +1861,8 @@ document.addEventListener("click", async e => {
     if (a === "hotelsetzen") hotelSetzen(+b.dataset.d);
     if (a === "tagauf") tagOeffnen(b.dataset.week, +b.dataset.d);
     if (a === "wzeigen") { DATA.plan = planVon(b.dataset.week) || DATA.plan; persist(false); render(); scrollTo(0, 0); }
-    if (a === "heute") { const el = document.getElementById("tag-" + today()); if (el) el.scrollIntoView({ block: "start" }); }
+    if (a === "heute") zumTagSpringen(today());
+    if (a === "zutag") zumTagSpringen(b.dataset.datum);
     if (a === "spalteneu") spalteHinzufuegen();
     if (a === "woche") { if ($("#dlg").open) $("#dlg").close(); wocheAnsehen(b.dataset.datum); }
     if (a === "open") openCustomer(b.dataset.id);
@@ -1995,6 +2006,8 @@ function stillAnmelden() {
   ORDNER = await Sp.ordnerVerfuegbar();
   if (DATA) persist(false);
   render();
+  // Handy (Optik 2026-11-11): beim Öffnen gleich die heutige Tour zeigen, wenn heute Besuche geplant sind
+  if (handy() && TAB === "plan" && PLAN() && PLAN().days.some(D => D.type !== "home" && D.date === today() && D.stops.length)) requestAnimationFrame(() => zumTagSpringen(today()));
   if (rueck && rueck.fehler && !/interaction_required|login_required|consent_required/.test(rueck.fehler)) toast("Google-Anmeldung nicht erfolgt (" + rueck.fehler + ")");
   if (G.konfiguriert()) {
     if (G.angemeldet()) { if (rueck && rueck.ok) { await G.kontoLaden().catch(() => {}); toast("Mit Google verbunden"); } abgleichen(); }

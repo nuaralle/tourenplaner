@@ -238,3 +238,41 @@ details.planen{flex:1 1 22rem;max-width:36rem}
 .hotelzeile input{flex:1;min-width:0;box-sizing:border-box;min-height:44px;font-size:16px;padding:.4rem .6rem;border:1px solid var(--line);border-radius:8px;background:var(--surf);color:var(--ink)}
 .hotelzeile button{box-sizing:border-box;min-height:44px}
 .hotel .kontakt{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}
+/* Optik 2026-11-11 (iPhone im Alltag): Tagesleiste zum Springen, Wochenübersicht zum Aufklappen, Fenster mit festem Kopf,
+   größere Tippflächen, Ränder für Geräte mit Aussparung. Planung und Daten unverändert. */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+button,a,summary,label,select,input{touch-action:manipulation}
+.top .in,main{padding-left:max(1rem,env(safe-area-inset-left,0px));padding-right:max(1rem,env(safe-area-inset-right,0px))}
+.tagleiste{display:none}
+details.uebersicht>summary{display:none}
+/* Fenster: Titel und „Schließen“ bleiben beim Scrollen oben stehen */
+dialog{max-height:90dvh}
+.dlgin>.dh{position:sticky;top:0;z-index:2;background:var(--surf);margin:-1.1rem -1.2rem 0;padding:.7rem 1.2rem .6rem;border-bottom:1px solid var(--line)}
+.dh button{flex:none;min-height:44px}
+label.chk input{width:20px;height:20px;flex:none;accent-color:var(--acc)}
+@media (max-width:640px){
+ button,input,select,textarea,.pill{min-height:44px}
+ label.chk{min-height:44px}
+ .gbtn{min-height:36px}
+ .worte button{min-height:40px}.fotos button{min-height:40px}
+ .notes .nedit{padding:.5rem 0 .5rem .9rem}
+ .facts dd a{display:inline-block;padding:.25rem 0}
+ .top .sync{white-space:normal;line-height:1.15;font-size:.75rem;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+ .tabs{padding-left:max(.4rem,env(safe-area-inset-left,0px));padding-right:max(.4rem,env(safe-area-inset-right,0px))}
+ /* Tagesleiste: bleibt unter der Kopfzeile stehen */
+ .tagleiste{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:.3rem;position:sticky;top:calc(env(safe-area-inset-top,0px) + var(--kopfH,44px));z-index:4;background:var(--bg);margin:-.6rem -1rem .7rem;padding:.4rem 1rem;box-shadow:0 1px 0 var(--line)}
+ .tagleiste button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:46px;padding:.15rem .1rem;line-height:1.15;border-radius:8px}
+ .tagleiste b{font:700 .95rem var(--disp)}
+ .tagleiste small{font-size:.68rem;color:var(--muted);white-space:nowrap}
+ .tagleiste .leer{background:transparent}.tagleiste .leer b{color:var(--muted)}
+ .tagleiste .heute{background:var(--acc);color:var(--accInk);border-color:var(--acc)}
+ .tagleiste .heute b,.tagleiste .heute small{color:var(--accInk)}
+ .day{scroll-margin-top:calc(var(--kopfH,44px) + 4.4rem)}
+ /* Wochenübersicht (Karte und Zahlen) zugeklappt, damit die Tage gleich oben stehen */
+ details.uebersicht{margin:0 0 .6rem}
+ details.uebersicht>summary{display:flex;align-items:center;gap:.35rem;font-weight:600;color:var(--acc);min-height:44px}
+ details.uebersicht[open]>.overview{margin-top:.3rem}
+ /* Kundenliste: die vier Knöpfe als gleichmäßiges Raster */
+ .listhead>.row{display:grid;grid-template-columns:1fr 1fr;width:100%}
+ .dlgin{padding:1rem 1rem 1.2rem}.dlgin>.dh{margin:-1rem -1rem 0;padding:.6rem 1rem .5rem}
+}
